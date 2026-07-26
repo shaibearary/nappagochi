@@ -23,11 +23,12 @@ preview must be opened through Paja or another compatible NIP-5D runtime, not
 as a standalone web page.
 
 ```bash
-PATH="$PATH:$HOME/.deno/bin" napplet paja -- pnpm vite --host 127.0.0.1
+PATH="$PATH:$HOME/.deno/bin" napplet paja --relay-mode memory -- pnpm vite --host 127.0.0.1
 ```
 
 Open the Paja runtime URL it prints. The local Paja preview and development
-signer flow were verified on 2026-07-26.
+signer flow were verified on 2026-07-26. The in-memory relay mode keeps test
+events off public relays.
 
 ## Product premise
 

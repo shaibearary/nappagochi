@@ -32,13 +32,14 @@ never be reused for production signing.
 ## Preview in a real shell
 
 ```bash
-PATH="$PATH:$HOME/.deno/bin" napplet paja -- pnpm vite --host 127.0.0.1
+PATH="$PATH:$HOME/.deno/bin" napplet paja --relay-mode memory -- pnpm vite --host 127.0.0.1
 ```
 
 Use the Paja URL printed by the command, not the underlying Vite URL. Deno,
 Kehto, and Paja were verified on this machine on 2026-07-26: the shell loaded
 the app, injected the runtime, connected the development signer, and reached
-the first-adoption screen.
+the first-adoption screen. The command above uses Paja's in-memory relay
+simulator so test events do not reach public relays.
 
 ## Napplet boundaries
 
