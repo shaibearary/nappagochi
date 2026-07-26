@@ -22,6 +22,13 @@ The build produces one self-contained `dist/index.html`. A real interactive
 preview must be opened through Paja or another compatible NIP-5D runtime, not
 as a standalone web page.
 
+```bash
+PATH="$PATH:$HOME/.deno/bin" napplet paja -- pnpm vite --host 127.0.0.1
+```
+
+Open the Paja runtime URL it prints. The local Paja preview and development
+signer flow were verified on 2026-07-26.
+
 ## Product premise
 
 - A Nostr account can create a pet by signing a birth event.

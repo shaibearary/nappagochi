@@ -32,12 +32,13 @@ never be reused for production signing.
 ## Preview in a real shell
 
 ```bash
-napplet paja -- pnpm vite --host 127.0.0.1
+PATH="$PATH:$HOME/.deno/bin" napplet paja -- pnpm vite --host 127.0.0.1
 ```
 
-Use the Paja URL printed by the command, not the underlying Vite URL. This
-machine currently has the napplet CLI but not the `kehto`/Paja runtime, so the
-manual live-shell preview remains open.
+Use the Paja URL printed by the command, not the underlying Vite URL. Deno,
+Kehto, and Paja were verified on this machine on 2026-07-26: the shell loaded
+the app, injected the runtime, connected the development signer, and reached
+the first-adoption screen.
 
 ## Napplet boundaries
 
