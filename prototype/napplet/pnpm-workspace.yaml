@@ -1,0 +1,13 @@
+packages:
+  - .
+
+allowBuilds:
+  esbuild: true
+
+minimumReleaseAgeExclude:
+  - "@napplet/conformance-cli@0.2.16"
+  - "@napplet/conformance@0.14.0"
+  - "@napplet/core@0.29.0"
+  - "@napplet/nap@0.29.0"
+  - "@napplet/sdk@0.25.0"
+  - "@napplet/vite-plugin@0.12.0"

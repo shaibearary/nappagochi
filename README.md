@@ -1,10 +1,26 @@
 # Nostr Pet
 
-Planning repository for a desktop pet whose life reflects its owner's public
-Nostr activity.
+Product plan and working napplet prototype for a pet whose life reflects its
+owner's public Nostr activity.
 
-Status: **research and product planning only**. No application code has been
-started.
+Status: **napplet prototype complete; native desktop shell not started**.
+
+![Nostr Pet napplet prototype](docs/images/napplet-prototype-desktop.png)
+
+## Try the prototype
+
+The implementation is in [`prototype/napplet`](prototype/napplet/README.md).
+
+```bash
+cd prototype/napplet
+pnpm install
+pnpm run verify
+pnpm run test:conformance
+```
+
+The build produces one self-contained `dist/index.html`. A real interactive
+preview must be opened through Paja or another compatible NIP-5D runtime, not
+as a standalone web page.
 
 ## Product premise
 
@@ -34,6 +50,8 @@ limitations are in [docs/02-nostr-protocol-design.md](docs/02-nostr-protocol-des
 5. [Implementation plan](docs/05-implementation-plan.md)
 6. [Risks and open decisions](docs/06-risks-and-open-decisions.md)
 7. [Research sources](docs/07-research-sources.md)
+8. [Napplet prototype specification](docs/08-napplet-prototype-spec.md)
+9. [Prototype build report](docs/09-prototype-build-report.md)
 
 ## Decisions already made for the plan
 

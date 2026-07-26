@@ -1,0 +1,1182 @@
+import {
+  identity,
+  outbox,
+  storage,
+  themeGet,
+  themeOnChanged,
+  type NostrEvent,
+  type OutboxSubscription,
+  type ProfileData,
+  type RelayEventResult,
+  type Subscription,
+  type Theme,
+} from '@napplet/sdk';
+import './styles.css';
+
+declare global {
+  interface Window {
+    napplet?: {
+      identity?: {
+        getPublicKey?: unknown;
+        getProfile?: unknown;
+        getFollows?: unknown;
+        onChanged?: unknown;
+      };
+      outbox?: {
+        getEvent?: unknown;
+        query?: unknown;
+        subscribe?: unknown;
+        publish?: unknown;
+      };
+      storage?: {
+        getItem?: unknown;
+        setItem?: unknown;
+        removeItem?: unknown;
+      };
+      theme?: {
+        get?: unknown;
+        onChanged?: unknown;
+      };
+    };
+  }
+}
+
+const BIRTH_D = 'nostr.pet.birth.v1';
+const PROFILE_D_PREFIX = 'nostr.pet.profile.v1:';
+const DAY = 86_400;
+const FUTURE_TOLERANCE = 600;
+
+type PetState = 'happy' | 'content' | 'lonely' | 'sick' | 'critical' | 'dead';
+type Palette = 'peach' | 'mint' | 'night';
+type Eyes = 'round' | 'sleepy' | 'sparkle';
+type Accessory = 'none' | 'bow' | 'hat';
+type Modal = 'note' | 'doctor' | 'settings' | 'preview' | null;
+
+type Appearance = {
+  base: 'momo-01';
+  palette: Palette;
+  eyes: Eyes;
+  accessory: Accessory;
+};
+
+type PetData = {
+  v: 1;
+  name: string;
+  species: 'momo';
+  appearance: Appearance;
+  ruleset: 'gentle-v1';
+};
+
+type Birth = {
+  event: NostrEvent;
+  data: PetData;
+  previousId?: string;
+};
+
+type Health = {
+  state: PetState;
+  lastCareAt: number;
+  daysQuiet: number;
+  canFeed: boolean;
+};
+
+type DoctorCandidate = {
+  event: NostrEvent;
+  relayHint: string;
+};
+
+const DEFAULT_APPEARANCE: Appearance = {
+  base: 'momo-01',
+  palette: 'peach',
+  eyes: 'round',
+  accessory: 'none',
+};
+
+const FALLBACK_THEME: Theme = {
+  colors: {
+    background: '#fff7e9',
+    text: '#30241f',
+    primary: '#ef6b55',
+  },
+  title: 'Warm paper',
+};
+
+const STATE_META: Record<
+  PetState,
+  { label: string; face: string; note: string; next: string }
+> = {
+  happy: {
+    label: 'Thriving',
+    face: '＾',
+    note: 'Bright-eyed and delighted to see you.',
+    next: 'Content after 3 quiet days',
+  },
+  content: {
+    label: 'Content',
+    face: '•',
+    note: 'Cozy, calm, and still feeling connected.',
+    next: 'Lonely after 7 quiet days',
+  },
+  lonely: {
+    label: 'Lonely',
+    face: '﹏',
+    note: 'Missing your voice on Nostr.',
+    next: 'Sick after 14 quiet days',
+  },
+  sick: {
+    label: 'Sick',
+    face: '×',
+    note: 'A normal post is no longer enough. Reply to someone to help.',
+    next: 'Critical after 30 quiet days',
+  },
+  critical: {
+    label: 'Critical',
+    face: '—',
+    note: 'Time matters. A thoughtful reply can still save your pet.',
+    next: 'Dies after 45 quiet days',
+  },
+  dead: {
+    label: 'Remembered',
+    face: '·',
+    note: 'This life is complete. Its history cannot be rewritten.',
+    next: 'You may adopt a new pet',
+  },
+};
+
+const app = document.querySelector<HTMLElement>('#app') as HTMLElement;
+if (!app) throw new Error('Missing app root');
+
+let pubkey = '';
+let accountName = '';
+let births: Birth[] = [];
+let notes: NostrEvent[] = [];
+let verifiedMedicineIds = new Set<string>();
+let activeBirth: Birth | null = null;
+let appearance: Appearance = { ...DEFAULT_APPEARANCE };
+let health: Health | null = null;
+let incompleteSync = false;
+let loading = true;
+let actionBusy = false;
+let message = '';
+let modal: Modal = null;
+let previewState: PetState | null = null;
+let doctorCandidates: DoctorCandidate[] = [];
+let doctorLoading = false;
+let liveSubscription: OutboxSubscription | null = null;
+let identitySubscription: Subscription | null = null;
+let themeSubscription: Subscription | null = null;
+let healthTimer: number | null = null;
+
+function nowSeconds(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function shortKey(value: string): string {
+  return value ? `${value.slice(0, 7)}…${value.slice(-5)}` : 'signed out';
+}
+
+function tagValue(event: NostrEvent, key: string): string | undefined {
+  return event.tags.find((tag) => tag[0] === key)?.[1];
+}
+
+function hasReplyTag(event: NostrEvent): boolean {
+  return event.tags.some((tag) => tag[0] === 'e');
+}
+
+function isAllowedPalette(value: unknown): value is Palette {
+  return value === 'peach' || value === 'mint' || value === 'night';
+}
+
+function isAllowedEyes(value: unknown): value is Eyes {
+  return value === 'round' || value === 'sleepy' || value === 'sparkle';
+}
+
+function isAllowedAccessory(value: unknown): value is Accessory {
+  return value === 'none' || value === 'bow' || value === 'hat';
+}
+
+function safeAppearance(value: unknown): Appearance {
+  if (!value || typeof value !== 'object') return { ...DEFAULT_APPEARANCE };
+  const candidate = value as Partial<Appearance>;
+  return {
+    base: 'momo-01',
+    palette: isAllowedPalette(candidate.palette) ? candidate.palette : 'peach',
+    eyes: isAllowedEyes(candidate.eyes) ? candidate.eyes : 'round',
+    accessory: isAllowedAccessory(candidate.accessory) ? candidate.accessory : 'none',
+  };
+}
+
+function parseBirth(event: NostrEvent): Birth | null {
+  if (event.kind !== 78 || tagValue(event, 'd') !== BIRTH_D) return null;
+  if (event.created_at > nowSeconds() + FUTURE_TOLERANCE) return null;
+
+  try {
+    const candidate = JSON.parse(event.content) as Partial<PetData>;
+    if (candidate.v !== 1 || candidate.species !== 'momo') return null;
+    const name = String(candidate.name ?? '').trim().slice(0, 28);
+    if (!name) return null;
+    return {
+      event,
+      previousId: tagValue(event, 'e'),
+      data: {
+        v: 1,
+        name,
+        species: 'momo',
+        appearance: safeAppearance(candidate.appearance),
+        ruleset: 'gentle-v1',
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+function stateForElapsed(seconds: number): PetState {
+  if (seconds < 3 * DAY) return 'happy';
+  if (seconds < 7 * DAY) return 'content';
+  if (seconds < 14 * DAY) return 'lonely';
+  if (seconds < 30 * DAY) return 'sick';
+  if (seconds < 45 * DAY) return 'critical';
+  return 'dead';
+}
+
+function reduceHealth(birth: Birth, at: number): Health {
+  let lastCareAt = birth.event.created_at;
+  const activity = notes
+    .filter(
+      (event) =>
+        event.pubkey === pubkey &&
+        event.created_at >= birth.event.created_at &&
+        event.created_at <= at &&
+        event.created_at <= nowSeconds() + FUTURE_TOLERANCE,
+    )
+    .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
+
+  for (const event of activity) {
+    const stateBefore = stateForElapsed(Math.max(0, event.created_at - lastCareAt));
+    if (stateBefore === 'dead') break;
+    if (verifiedMedicineIds.has(event.id)) {
+      lastCareAt = event.created_at;
+    } else if (!hasReplyTag(event) && stateBefore !== 'sick' && stateBefore !== 'critical') {
+      lastCareAt = event.created_at;
+    }
+  }
+
+  const quietSeconds = Math.max(0, at - lastCareAt);
+  const state = stateForElapsed(quietSeconds);
+  return {
+    state,
+    lastCareAt,
+    daysQuiet: Math.floor(quietSeconds / DAY),
+    canFeed: state === 'happy' || state === 'content' || state === 'lonely',
+  };
+}
+
+function resolveLineage(): Birth | null {
+  const sorted = [...births].sort(
+    (a, b) => a.event.created_at - b.event.created_at || a.event.id.localeCompare(b.event.id),
+  );
+  if (!sorted.length) return null;
+
+  let current = sorted.find((birth) => !birth.previousId) ?? sorted[0];
+  const visited = new Set([current.event.id]);
+
+  while (true) {
+    const successor = sorted.find(
+      (candidate) =>
+        !visited.has(candidate.event.id) &&
+        candidate.previousId === current.event.id &&
+        candidate.event.created_at >= current.event.created_at &&
+        reduceHealth(current, candidate.event.created_at).state === 'dead',
+    );
+    if (!successor) return current;
+    current = successor;
+    visited.add(current.event.id);
+  }
+}
+
+function directReplyTarget(event: NostrEvent): { id: string; pubkey: string; relay: string } | null {
+  const eventTags = event.tags.filter((tag) => tag[0] === 'e' && tag[1]);
+  const marked = eventTags.find((tag) => tag[3] === 'reply');
+  const target = marked ?? eventTags.at(-1);
+  const targetPubkey = event.tags.find(
+    (tag) => tag[0] === 'p' && tag[1] && tag[1] !== pubkey,
+  )?.[1];
+  if (!target?.[1] || !targetPubkey) return null;
+  return { id: target[1], pubkey: targetPubkey, relay: target[2] ?? '' };
+}
+
+async function verifyMedicineEvents(events: NostrEvent[]): Promise<Set<string>> {
+  const candidates = events
+    .filter((event) => event.pubkey === pubkey && hasReplyTag(event))
+    .sort((a, b) => b.created_at - a.created_at)
+    .slice(0, 40);
+  const accepted = new Set<string>();
+
+  await Promise.all(
+    candidates.map(async (event) => {
+      const target = directReplyTarget(event);
+      if (!target) return;
+      try {
+        const result = await outbox.getEvent(target.id, {
+          author: target.pubkey,
+          relays: target.relay ? [target.relay] : undefined,
+          timeoutMs: 4_000,
+        });
+        const parent = result.result?.event;
+        if (parent?.kind === 1 && parent.pubkey === target.pubkey && parent.pubkey !== pubkey) {
+          accepted.add(event.id);
+        }
+      } catch {
+        // A reply is medicine only when its parent can be verified.
+      }
+    }),
+  );
+  return accepted;
+}
+
+function profileD(eventId: string): string {
+  return `${PROFILE_D_PREFIX}${eventId}`;
+}
+
+async function loadAppearance(birth: Birth): Promise<Appearance> {
+  try {
+    const result = await outbox.query(
+      [{ authors: [pubkey], kinds: [30_078], '#d': [profileD(birth.event.id)], limit: 20 }],
+      { authors: [pubkey], limit: 20, timeoutMs: 5_000 },
+    );
+    incompleteSync ||= Boolean(result.incomplete);
+    const latest = result.events
+      .map((item) => item.event)
+      .filter((event) => event.created_at <= nowSeconds() + FUTURE_TOLERANCE)
+      .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))[0];
+    if (!latest) return birth.data.appearance;
+    const parsed = JSON.parse(latest.content) as { appearance?: unknown };
+    return safeAppearance(parsed.appearance);
+  } catch {
+    return birth.data.appearance;
+  }
+}
+
+async function restorePreview(): Promise<void> {
+  previewState = null;
+  if (
+    typeof window.napplet?.storage?.getItem !== 'function' ||
+    typeof window.napplet.storage.setItem !== 'function' ||
+    typeof window.napplet.storage.removeItem !== 'function'
+  ) {
+    return;
+  }
+  try {
+    const saved = await storage.getItem('pet-preview-state');
+    if (saved && saved in STATE_META) previewState = saved as PetState;
+  } catch {
+    // Optional shell storage is a convenience, never a requirement.
+  }
+}
+
+async function rememberPreview(value: PetState | null): Promise<void> {
+  if (
+    typeof window.napplet?.storage?.getItem !== 'function' ||
+    typeof window.napplet.storage.setItem !== 'function' ||
+    typeof window.napplet.storage.removeItem !== 'function'
+  ) {
+    return;
+  }
+  try {
+    if (value) await storage.setItem('pet-preview-state', value);
+    else await storage.removeItem('pet-preview-state');
+  } catch {
+    // Preview persistence can fail without affecting the pet.
+  }
+}
+
+function closeLiveSubscription(): void {
+  liveSubscription?.close();
+  liveSubscription = null;
+}
+
+function beginLiveSubscription(): void {
+  closeLiveSubscription();
+  if (!pubkey || !activeBirth) return;
+  liveSubscription = outbox.subscribe(
+    [{ authors: [pubkey], kinds: [1], since: activeBirth.event.created_at }],
+    { authors: [pubkey], limit: 200, timeoutMs: 5_000 },
+  );
+  liveSubscription.on('event', (result) => {
+    if (notes.some((event) => event.id === result.event.id)) return;
+    notes.push(result.event);
+    void refreshDerivedState();
+  });
+}
+
+async function refreshDerivedState(): Promise<void> {
+  verifiedMedicineIds = await verifyMedicineEvents(notes);
+  activeBirth = resolveLineage();
+  if (activeBirth) {
+    health = reduceHealth(activeBirth, nowSeconds());
+  }
+  render();
+}
+
+async function load(): Promise<void> {
+  loading = true;
+  message = '';
+  closeLiveSubscription();
+  render();
+
+  try {
+    pubkey = await identity.getPublicKey();
+    if (!pubkey) {
+      accountName = '';
+      births = [];
+      notes = [];
+      activeBirth = null;
+      health = null;
+      loading = false;
+      render();
+      return;
+    }
+
+    const profilePromise = identity.getProfile();
+    const birthPromise = outbox.query(
+      [{ authors: [pubkey], kinds: [78], '#d': [BIRTH_D], limit: 100 }],
+      { authors: [pubkey], limit: 100, timeoutMs: 6_000 },
+    );
+    const notePromise = outbox.query([{ authors: [pubkey], kinds: [1], limit: 500 }], {
+      authors: [pubkey],
+      limit: 500,
+      timeoutMs: 8_000,
+    });
+
+    const [profile, birthResult, noteResult] = await Promise.all([
+      profilePromise,
+      birthPromise,
+      notePromise,
+    ]);
+    accountName = profileLabel(profile);
+    incompleteSync = Boolean(birthResult.incomplete || noteResult.incomplete);
+    births = birthResult.events
+      .map((item) => parseBirth(item.event))
+      .filter((birth): birth is Birth => Boolean(birth));
+    notes = noteResult.events.map((item) => item.event);
+    verifiedMedicineIds = await verifyMedicineEvents(notes);
+    activeBirth = resolveLineage();
+    health = activeBirth ? reduceHealth(activeBirth, nowSeconds()) : null;
+    appearance = activeBirth ? await loadAppearance(activeBirth) : { ...DEFAULT_APPEARANCE };
+    await restorePreview();
+    beginLiveSubscription();
+  } catch (error) {
+    message = error instanceof Error ? error.message : 'The Nostr history could not be loaded.';
+  } finally {
+    loading = false;
+    render();
+  }
+}
+
+function profileLabel(profile: ProfileData | null): string {
+  return profile?.displayName?.trim() || profile?.name?.trim() || shortKey(pubkey);
+}
+
+function formatDate(timestamp: number): string {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(timestamp * 1000);
+}
+
+function formatRelative(timestamp: number): string {
+  const elapsed = Math.max(0, nowSeconds() - timestamp);
+  if (elapsed < 60) return 'just now';
+  if (elapsed < 3_600) return `${Math.floor(elapsed / 60)}m ago`;
+  if (elapsed < DAY) return `${Math.floor(elapsed / 3_600)}h ago`;
+  return `${Math.floor(elapsed / DAY)}d ago`;
+}
+
+function effectiveState(): PetState {
+  return previewState ?? health?.state ?? 'happy';
+}
+
+function petMarkup(state: PetState, petAppearance: Appearance): string {
+  const accessory =
+    petAppearance.accessory === 'bow'
+      ? '<span class="pet-accessory bow" aria-hidden="true">◆</span>'
+      : petAppearance.accessory === 'hat'
+        ? '<span class="pet-accessory hat" aria-hidden="true"></span>'
+        : '';
+  const eye = petAppearance.eyes === 'sleepy' ? '⌒' : petAppearance.eyes === 'sparkle' ? '✦' : '●';
+
+  return `
+    <div class="pet pet--${state} palette--${petAppearance.palette}" role="img"
+      aria-label="${escapeHtml(STATE_META[state].label)} Nostr pet">
+      <span class="pet-shadow"></span>
+      <span class="pet-ear pet-ear--left"></span>
+      <span class="pet-ear pet-ear--right"></span>
+      <span class="pet-body">
+        ${accessory}
+        <span class="pet-cheek pet-cheek--left"></span>
+        <span class="pet-cheek pet-cheek--right"></span>
+        <span class="pet-eye pet-eye--left">${eye}</span>
+        <span class="pet-eye pet-eye--right">${eye}</span>
+        <span class="pet-mouth">${STATE_META[state].face}</span>
+        <span class="pet-patch"></span>
+      </span>
+      <span class="pet-signal" aria-hidden="true">⌁</span>
+    </div>
+  `;
+}
+
+function shellHeader(): string {
+  return `
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">⌁</span>
+        <span>Nostr Pet</span>
+        <span class="prototype-pill">prototype</span>
+      </div>
+      <div class="account">
+        ${incompleteSync ? '<span class="sync-pill" title="Some relay results were incomplete">partial sync</span>' : ''}
+        <span class="account-name">${escapeHtml(accountName || shortKey(pubkey))}</span>
+        <span class="account-dot" aria-hidden="true"></span>
+      </div>
+    </header>
+  `;
+}
+
+function loadingMarkup(): string {
+  return `
+    ${shellHeader()}
+    <section class="loading-card">
+      <div class="loading-orbit" aria-hidden="true"><span></span></div>
+      <p>Finding your pet across Nostr…</p>
+      <small>Birth, activity, and appearance events are being reconciled.</small>
+    </section>
+  `;
+}
+
+function signedOutMarkup(): string {
+  return `
+    ${shellHeader()}
+    <section class="welcome-card">
+      <div class="mini-pet">${petMarkup('content', DEFAULT_APPEARANCE)}</div>
+      <p class="eyebrow">A small life tied to your public voice</p>
+      <h1>Sign in through your Nostr shell</h1>
+      <p>Nostr Pet never asks for your private key. The host handles identity, signing, and relays.</p>
+      <div class="notice">Choose an account in the napplet host, then reopen or refresh this view.</div>
+    </section>
+  `;
+}
+
+function adoptionMarkup(previous?: Birth): string {
+  const isSuccessor = Boolean(previous);
+  return `
+    ${shellHeader()}
+    <section class="adoption-layout">
+      <div class="adoption-art">
+        ${petMarkup('happy', DEFAULT_APPEARANCE)}
+        <span class="spark spark--one">✦</span>
+        <span class="spark spark--two">·</span>
+      </div>
+      <form id="adopt-form" class="adoption-card">
+        <p class="eyebrow">${isSuccessor ? 'A new chapter' : 'No pet found for this npub'}</p>
+        <h1>${isSuccessor ? 'Adopt another pet' : 'Meet your Nostr companion'}</h1>
+        <p>${isSuccessor
+          ? `${escapeHtml(previous?.data.name)} stays in your history. This creates a separate life.`
+          : 'Its birthday will be the timestamp of a signed Nostr birth event.'}</p>
+        <label>
+          Pet name
+          <input name="name" maxlength="28" autocomplete="off" placeholder="Momo" required />
+        </label>
+        <fieldset>
+          <legend>First color</legend>
+          <div class="swatches">
+            ${paletteOptions('peach')}
+          </div>
+        </fieldset>
+        <button class="primary-button" type="submit" ${actionBusy ? 'disabled' : ''}>
+          ${actionBusy ? 'Creating signed event…' : 'Adopt this pet'}
+        </button>
+        <small>You will approve a kind 78 event in your Nostr host.</small>
+      </form>
+    </section>
+  `;
+}
+
+function paletteOptions(selected: Palette): string {
+  const options: Array<{ id: Palette; label: string }> = [
+    { id: 'peach', label: 'Peach' },
+    { id: 'mint', label: 'Mint' },
+    { id: 'night', label: 'Night' },
+  ];
+  return options
+    .map(
+      ({ id, label }) => `
+        <label class="swatch swatch--${id}">
+          <input type="radio" name="palette" value="${id}" ${selected === id ? 'checked' : ''} />
+          <span aria-hidden="true"></span>
+          ${label}
+        </label>`,
+    )
+    .join('');
+}
+
+function petHomeMarkup(): string {
+  if (!activeBirth || !health) return adoptionMarkup();
+  if (health.state === 'dead' && modal === null && births.length > 0) {
+    // The memorial remains the home view; adopting is an explicit action below.
+  }
+
+  const shownState = effectiveState();
+  const meta = STATE_META[shownState];
+  const ageDays = Math.max(0, Math.floor((nowSeconds() - activeBirth.event.created_at) / DAY));
+  const isPreview = Boolean(previewState);
+
+  return `
+    ${shellHeader()}
+    <section class="pet-layout">
+      <div class="habitat">
+        <div class="ambient-shape ambient-shape--one"></div>
+        <div class="ambient-shape ambient-shape--two"></div>
+        <button class="pet-stage" data-action="pet-menu" aria-label="Open pet actions">
+          ${petMarkup(shownState, appearance)}
+        </button>
+        <div class="state-caption">
+          ${isPreview ? '<span class="preview-flag">visual preview</span>' : ''}
+          <span class="state-kicker">${escapeHtml(meta.label)}</span>
+          <h1>${escapeHtml(activeBirth.data.name)}</h1>
+          <p>${escapeHtml(meta.note)}</p>
+        </div>
+      </div>
+
+      <aside class="care-panel">
+        <div class="care-heading">
+          <div>
+            <p class="eyebrow">Today’s pulse</p>
+            <h2>${health.state === 'dead' ? 'Memorial' : `${health.daysQuiet} quiet ${health.daysQuiet === 1 ? 'day' : 'days'}`}</h2>
+          </div>
+          <button class="icon-button" data-action="settings" aria-label="Appearance settings">⚙</button>
+        </div>
+
+        <div class="vital-track" aria-label="Pet lifecycle">
+          ${(['happy', 'content', 'lonely', 'sick', 'critical', 'dead'] as PetState[])
+            .map(
+              (state) =>
+                `<span class="${state === health?.state ? 'active' : ''}" title="${STATE_META[state].label}"></span>`,
+            )
+            .join('')}
+        </div>
+        <div class="next-state">
+          <span>${escapeHtml(meta.next)}</span>
+          <button class="text-button" data-action="preview">Preview states</button>
+        </div>
+
+        <div class="action-grid">
+          <button class="care-button" data-action="note" ${health.state === 'dead' ? 'disabled' : ''}>
+            <span>✎</span><strong>Write a note</strong><small>${health.canFeed ? 'Feeds your pet' : 'Keeps your voice active'}</small>
+          </button>
+          <button class="care-button care-button--doctor" data-action="doctor"
+            ${health.state === 'dead' ? 'disabled' : ''}>
+            <span>＋</span><strong>Visit doctor</strong><small>Reply to someone</small>
+          </button>
+        </div>
+
+        <dl class="pet-facts">
+          <div><dt>Born</dt><dd>${formatDate(activeBirth.event.created_at)}</dd></div>
+          <div><dt>Age</dt><dd>${ageDays} ${ageDays === 1 ? 'day' : 'days'}</dd></div>
+          <div><dt>Last care</dt><dd>${formatRelative(health.lastCareAt)}</dd></div>
+          <div><dt>Proof</dt><dd>${shortKey(activeBirth.event.id)}</dd></div>
+        </dl>
+
+        ${health.state === 'dead'
+          ? `<button class="secondary-button full-width" data-action="adopt-next">Adopt a new pet</button>`
+          : ''}
+      </aside>
+    </section>
+  `;
+}
+
+function noteModalMarkup(): string {
+  return modalFrame(
+    'Write a Nostr note',
+    `
+      <p class="modal-copy">${health?.canFeed
+        ? 'A top-level kind 1 note will feed your pet.'
+        : 'Your pet is sick, so this note will not heal it. A reply is the medicine.'}</p>
+      <form id="note-form">
+        <label>Your note
+          <textarea name="content" maxlength="1000" rows="5" placeholder="What’s on your mind?" required></textarea>
+        </label>
+        <button class="primary-button" type="submit" ${actionBusy ? 'disabled' : ''}>
+          ${actionBusy ? 'Publishing…' : 'Review and publish'}
+        </button>
+      </form>
+    `,
+  );
+}
+
+function doctorModalMarkup(): string {
+  const candidates = doctorCandidates
+    .map(
+      (candidate, index) => `
+        <label class="note-choice">
+          <input type="radio" name="candidate" value="${index}" ${index === 0 ? 'checked' : ''} />
+          <span>
+            <strong>${shortKey(candidate.event.pubkey)}</strong>
+            <small>${formatRelative(candidate.event.created_at)}</small>
+            <em>${escapeHtml(candidate.event.content.slice(0, 180) || '(media or tag-only note)')}</em>
+          </span>
+        </label>`,
+    )
+    .join('');
+
+  return modalFrame(
+    'Visit the doctor',
+    doctorLoading
+      ? '<div class="doctor-loading">Finding recent notes from people you follow…</div>'
+      : doctorCandidates.length
+        ? `
+          <p class="modal-copy">Choose a real note and write a real reply. Publishing it creates verified medicine.</p>
+          <form id="doctor-form">
+            <fieldset class="note-choices"><legend>Reply to</legend>${candidates}</fieldset>
+            <label>Your reply
+              <textarea name="content" maxlength="1000" rows="4" placeholder="Add something thoughtful…" required></textarea>
+            </label>
+            <button class="primary-button" type="submit" ${actionBusy ? 'disabled' : ''}>
+              ${actionBusy ? 'Publishing reply…' : 'Reply and give medicine'}
+            </button>
+          </form>`
+        : `
+          <div class="empty-state">
+            <strong>No reply candidates found</strong>
+            <p>Follow a few people or wait for their recent kind 1 notes to reach your outbox routes.</p>
+            <button class="secondary-button" data-action="reload-doctor">Try again</button>
+          </div>`,
+  );
+}
+
+function settingsModalMarkup(): string {
+  return modalFrame(
+    'Pet appearance',
+    `
+      <form id="settings-form">
+        <fieldset>
+          <legend>Color</legend>
+          <div class="swatches">${paletteOptions(appearance.palette)}</div>
+        </fieldset>
+        <div class="form-columns">
+          <label>Eyes
+            <select name="eyes">
+              ${selectOptions(['round', 'sleepy', 'sparkle'], appearance.eyes)}
+            </select>
+          </label>
+          <label>Accessory
+            <select name="accessory">
+              ${selectOptions(['none', 'bow', 'hat'], appearance.accessory)}
+            </select>
+          </label>
+        </div>
+        <p class="modal-copy">Saving publishes a replaceable kind 30078 appearance event. It does not alter the birth event.</p>
+        <button class="primary-button" type="submit" ${actionBusy || health?.state === 'dead' ? 'disabled' : ''}>
+          ${health?.state === 'dead' ? 'Memorial appearance is fixed' : actionBusy ? 'Saving…' : 'Save appearance'}
+        </button>
+      </form>
+    `,
+  );
+}
+
+function selectOptions(values: string[], selected: string): string {
+  return values
+    .map(
+      (value) =>
+        `<option value="${value}" ${value === selected ? 'selected' : ''}>${value[0].toUpperCase()}${value.slice(1)}</option>`,
+    )
+    .join('');
+}
+
+function previewModalMarkup(): string {
+  const states = (Object.keys(STATE_META) as PetState[])
+    .map(
+      (state) => `
+        <button class="state-option ${previewState === state ? 'active' : ''}" data-preview="${state}">
+          <span class="state-dot state-dot--${state}"></span>
+          <span><strong>${STATE_META[state].label}</strong><small>${STATE_META[state].note}</small></span>
+        </button>`,
+    )
+    .join('');
+  return modalFrame(
+    'Visual state lab',
+    `
+      <p class="modal-copy">Preview only changes the drawing. Your canonical Nostr-derived state remains <strong>${health ? STATE_META[health.state].label : 'unknown'}</strong>.</p>
+      <div class="state-options">${states}</div>
+      <button class="secondary-button full-width" data-action="clear-preview">Return to live state</button>
+    `,
+  );
+}
+
+function modalFrame(title: string, body: string): string {
+  return `
+    <div class="modal-backdrop" data-action="close-modal">
+      <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <header>
+          <h2 id="modal-title">${escapeHtml(title)}</h2>
+          <button class="icon-button" data-action="close-modal" aria-label="Close">×</button>
+        </header>
+        ${body}
+      </section>
+    </div>
+  `;
+}
+
+function modalMarkup(): string {
+  if (modal === 'note') return noteModalMarkup();
+  if (modal === 'doctor') return doctorModalMarkup();
+  if (modal === 'settings') return settingsModalMarkup();
+  if (modal === 'preview') return previewModalMarkup();
+  return '';
+}
+
+function hasRequiredRuntime(): boolean {
+  const runtime = window.napplet;
+  return Boolean(
+    runtime &&
+      typeof runtime.identity?.getPublicKey === 'function' &&
+      typeof runtime.identity.getProfile === 'function' &&
+      typeof runtime.identity.getFollows === 'function' &&
+      typeof runtime.identity.onChanged === 'function' &&
+      typeof runtime.outbox?.getEvent === 'function' &&
+      typeof runtime.outbox.query === 'function' &&
+      typeof runtime.outbox.subscribe === 'function' &&
+      typeof runtime.outbox.publish === 'function',
+  );
+}
+
+function render(): void {
+  if (!hasRequiredRuntime()) {
+    app.innerHTML = `
+      <section class="runtime-guard">
+        ${petMarkup('lonely', DEFAULT_APPEARANCE)}
+        <h1>This prototype needs a compatible napplet host</h1>
+        <p>Open the built artifact through Paja or another NIP-5D-compatible shell with identity and outbox support.</p>
+      </section>`;
+    return;
+  }
+
+  let content = '';
+  if (loading) content = loadingMarkup();
+  else if (!pubkey) content = signedOutMarkup();
+  else if (!activeBirth) content = adoptionMarkup();
+  else content = petHomeMarkup();
+
+  app.innerHTML = `
+    <div class="app-shell">
+      ${content}
+      ${message ? `<div class="toast" role="status">${escapeHtml(message)}</div>` : ''}
+      ${modalMarkup()}
+    </div>`;
+  bindInteractions();
+}
+
+function bindInteractions(): void {
+  document.querySelector<HTMLFormElement>('#adopt-form')?.addEventListener('submit', handleAdopt);
+  document.querySelector<HTMLFormElement>('#note-form')?.addEventListener('submit', handleNote);
+  document.querySelector<HTMLFormElement>('#doctor-form')?.addEventListener('submit', handleDoctor);
+  document.querySelector<HTMLFormElement>('#settings-form')?.addEventListener('submit', handleSettings);
+
+  document.querySelectorAll<HTMLElement>('[data-action]').forEach((element) => {
+    element.addEventListener('click', (event) => {
+      const action = element.dataset.action;
+      if (action === 'close-modal' && event.target !== element && element.classList.contains('modal-backdrop')) {
+        return;
+      }
+      if (action === 'close-modal') {
+        modal = null;
+        render();
+      } else if (action === 'note' || action === 'pet-menu') {
+        modal = 'note';
+        render();
+      } else if (action === 'doctor') {
+        modal = 'doctor';
+        doctorCandidates = [];
+        doctorLoading = true;
+        render();
+        void loadDoctorCandidates();
+      } else if (action === 'settings') {
+        modal = 'settings';
+        render();
+      } else if (action === 'preview') {
+        modal = 'preview';
+        render();
+      } else if (action === 'clear-preview') {
+        previewState = null;
+        void rememberPreview(null);
+        render();
+      } else if (action === 'reload-doctor') {
+        doctorLoading = true;
+        render();
+        void loadDoctorCandidates();
+      } else if (action === 'adopt-next') {
+        activeBirth = null;
+        health = null;
+        render();
+      }
+    });
+  });
+
+  document.querySelectorAll<HTMLElement>('[data-preview]').forEach((element) => {
+    element.addEventListener('click', () => {
+      const state = element.dataset.preview as PetState;
+      if (!(state in STATE_META)) return;
+      previewState = state;
+      void rememberPreview(state);
+      render();
+    });
+  });
+}
+
+async function handleAdopt(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  const form = event.currentTarget as HTMLFormElement;
+  const data = new FormData(form);
+  const name = String(data.get('name') ?? '').trim().slice(0, 28);
+  const paletteValue = data.get('palette');
+  const palette: Palette = isAllowedPalette(paletteValue) ? paletteValue : 'peach';
+  if (!name) return;
+
+  actionBusy = true;
+  message = '';
+  render();
+  const previous = births.length
+    ? [...births].sort((a, b) => b.event.created_at - a.event.created_at)[0]
+    : undefined;
+  const petData: PetData = {
+    v: 1,
+    name,
+    species: 'momo',
+    appearance: { ...DEFAULT_APPEARANCE, palette },
+    ruleset: 'gentle-v1',
+  };
+  const tags = [
+    ['d', BIRTH_D],
+    ['t', 'nostr-pet'],
+    ['alt', `Birth event for Nostr Pet ${name}`],
+  ];
+  if (previous) tags.push(['e', previous.event.id]);
+
+  try {
+    const result = await outbox.publish({
+      kind: 78,
+      content: JSON.stringify(petData),
+      tags,
+      created_at: nowSeconds(),
+    });
+    if (!result.ok) throw new Error(result.error || 'The birth event was not accepted.');
+    message = `${name} has been born.`;
+    await load();
+  } catch (error) {
+    message = error instanceof Error ? error.message : 'The birth event could not be published.';
+  } finally {
+    actionBusy = false;
+    render();
+  }
+}
+
+async function handleNote(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  const form = event.currentTarget as HTMLFormElement;
+  const content = String(new FormData(form).get('content') ?? '').trim();
+  if (!content) return;
+
+  actionBusy = true;
+  render();
+  try {
+    const result = await outbox.publish({
+      kind: 1,
+      content,
+      tags: [],
+      created_at: nowSeconds(),
+    });
+    if (!result.ok) throw new Error(result.error || 'The note was not accepted.');
+    modal = null;
+    message = health?.canFeed ? 'Note published. Your pet enjoyed the meal.' : 'Note published.';
+    await load();
+  } catch (error) {
+    message = error instanceof Error ? error.message : 'The note could not be published.';
+  } finally {
+    actionBusy = false;
+    render();
+  }
+}
+
+async function loadDoctorCandidates(): Promise<void> {
+  try {
+    const follows = (await identity.getFollows()).filter((key) => key !== pubkey).slice(0, 30);
+    if (!follows.length) {
+      doctorCandidates = [];
+      return;
+    }
+    const result = await outbox.query([{ authors: follows, kinds: [1], limit: 40 }], {
+      authors: follows,
+      limit: 40,
+      timeoutMs: 7_000,
+    });
+    incompleteSync ||= Boolean(result.incomplete);
+    const uniqueAuthors = new Set<string>();
+    doctorCandidates = result.events
+      .filter((item) => item.event.created_at <= nowSeconds() + FUTURE_TOLERANCE)
+      .sort((a, b) => b.event.created_at - a.event.created_at)
+      .filter((item) => {
+        if (uniqueAuthors.has(item.event.pubkey)) return false;
+        uniqueAuthors.add(item.event.pubkey);
+        return true;
+      })
+      .slice(0, 6)
+      .map((item: RelayEventResult) => ({
+        event: item.event,
+        relayHint: item.sidecar?.relayHints?.[0] ?? '',
+      }));
+  } catch (error) {
+    message = error instanceof Error ? error.message : 'Reply candidates could not be loaded.';
+    doctorCandidates = [];
+  } finally {
+    doctorLoading = false;
+    render();
+  }
+}
+
+async function handleDoctor(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  const form = event.currentTarget as HTMLFormElement;
+  const data = new FormData(form);
+  const candidate = doctorCandidates[Number(data.get('candidate'))];
+  const content = String(data.get('content') ?? '').trim();
+  if (!candidate || !content) return;
+
+  actionBusy = true;
+  render();
+  const relayHint = candidate.relayHint;
+  try {
+    const result = await outbox.publish(
+      {
+        kind: 1,
+        content,
+        tags: [
+          ['e', candidate.event.id, relayHint, 'reply', candidate.event.pubkey],
+          ['p', candidate.event.pubkey, relayHint],
+        ],
+        created_at: nowSeconds(),
+      },
+      { toOutbox: true, toInboxes: [candidate.event.pubkey] },
+    );
+    if (!result.ok) throw new Error(result.error || 'The reply was not accepted.');
+    modal = null;
+    message = 'Reply published. The verified medicine is working.';
+    await load();
+  } catch (error) {
+    message = error instanceof Error ? error.message : 'The reply could not be published.';
+  } finally {
+    actionBusy = false;
+    render();
+  }
+}
+
+async function handleSettings(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  if (!activeBirth || health?.state === 'dead') return;
+  const form = event.currentTarget as HTMLFormElement;
+  const data = new FormData(form);
+  const paletteValue = data.get('palette');
+  const eyesValue = data.get('eyes');
+  const accessoryValue = data.get('accessory');
+  const nextAppearance: Appearance = {
+    base: 'momo-01',
+    palette: isAllowedPalette(paletteValue) ? paletteValue : 'peach',
+    eyes: isAllowedEyes(eyesValue) ? eyesValue : 'round',
+    accessory: isAllowedAccessory(accessoryValue) ? accessoryValue : 'none',
+  };
+
+  actionBusy = true;
+  render();
+  try {
+    const result = await outbox.publish({
+      kind: 30_078,
+      content: JSON.stringify({ v: 1, name: activeBirth.data.name, appearance: nextAppearance }),
+      tags: [
+        ['d', profileD(activeBirth.event.id)],
+        ['e', activeBirth.event.id],
+        ['t', 'nostr-pet'],
+        ['alt', `Appearance for Nostr Pet ${activeBirth.data.name}`],
+      ],
+      created_at: nowSeconds(),
+    });
+    if (!result.ok) throw new Error(result.error || 'The appearance event was not accepted.');
+    appearance = nextAppearance;
+    modal = null;
+    message = 'Appearance saved to Nostr.';
+  } catch (error) {
+    message = error instanceof Error ? error.message : 'Appearance could not be saved.';
+  } finally {
+    actionBusy = false;
+    render();
+  }
+}
+
+function applyTheme(theme: Theme): void {
+  const root = document.documentElement;
+  root.style.setProperty('--shell-bg', theme.colors.background);
+  root.style.setProperty('--shell-text', theme.colors.text);
+  root.style.setProperty('--shell-primary', theme.colors.primary);
+  root.style.background = theme.colors.background;
+  root.style.color = theme.colors.text;
+  document.body.style.background = theme.colors.background;
+  document.body.style.color = theme.colors.text;
+  app.style.background = theme.colors.background;
+  app.style.color = theme.colors.text;
+}
+
+async function setupTheme(): Promise<void> {
+  applyTheme(FALLBACK_THEME);
+  if (
+    typeof window.napplet?.theme?.get !== 'function' ||
+    typeof window.napplet.theme.onChanged !== 'function'
+  ) {
+    return;
+  }
+  try {
+    applyTheme(await themeGet());
+    themeSubscription = themeOnChanged(applyTheme);
+  } catch {
+    applyTheme(FALLBACK_THEME);
+  }
+}
+
+function cleanUp(): void {
+  closeLiveSubscription();
+  identitySubscription?.close();
+  themeSubscription?.close();
+  if (healthTimer !== null) window.clearInterval(healthTimer);
+}
+
+async function start(): Promise<void> {
+  applyTheme(FALLBACK_THEME);
+  render();
+  if (!hasRequiredRuntime()) return;
+  await setupTheme();
+  identitySubscription = identity.onChanged(() => {
+    void load();
+  });
+  await load();
+  healthTimer = window.setInterval(() => {
+    if (!activeBirth) return;
+    health = reduceHealth(activeBirth, nowSeconds());
+    render();
+  }, 60_000);
+}
+
+window.addEventListener('beforeunload', cleanUp);
+void start();

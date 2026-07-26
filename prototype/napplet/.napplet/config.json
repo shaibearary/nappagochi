@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "sourceDir": ".",
+  "relays": [],
+  "blossomServers": [],
+  "defaultTarget": "named",
+  "named": [
+    "nostr-pet"
+  ],
+  "discover": {
+    "enabled": true,
+    "roots": [
+      "."
+    ]
+  },
+  "signing": {
+    "mode": "interactive"
+  },
+  "conformance": {
+    "command": "napplet-conformance"
+  },
+  "paja": {
+    "command": "kehto"
+  },
+  "metadata": {
+    "name": "nostr-pet",
+    "title": "Nostr Pet Prototype",
+    "description": "A portable Nostr activity pet prototype.",
+    "archetypes": []
+  }
+}
