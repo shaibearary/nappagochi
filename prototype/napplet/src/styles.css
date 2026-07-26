@@ -633,6 +633,15 @@ select:focus-visible {
   text-align: right;
 }
 
+.habitat-link {
+  font-size: 13px;
+}
+
+.habitat-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .primary-button,
 .secondary-button {
   min-height: 46px;
@@ -919,6 +928,120 @@ form > small {
   color: var(--ink-muted);
   font-size: 13px;
   line-height: 1.55;
+}
+
+.profile-score-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+  border: 1px solid color-mix(in srgb, var(--shell-primary) 24%, var(--line));
+  border-radius: 18px;
+  padding: 16px;
+  background: var(--accent-soft);
+}
+
+.profile-score-card > span {
+  min-width: 86px;
+  color: var(--shell-primary);
+  font-weight: 760;
+}
+
+.profile-score-card > span strong {
+  font-size: 34px;
+  letter-spacing: -0.06em;
+}
+
+.profile-score-card > div {
+  display: grid;
+  gap: 3px;
+}
+
+.profile-score-card > div b {
+  font-size: 15px;
+}
+
+.profile-score-card > div small {
+  color: var(--ink-muted);
+}
+
+.profile-score-card--excellent {
+  border-color: color-mix(in srgb, #4b9f70 46%, var(--line));
+  background: color-mix(in srgb, #74c98f 18%, var(--paper));
+}
+
+.profile-score-card--attention,
+.profile-score-card--incomplete {
+  border-color: color-mix(in srgb, #d59745 42%, var(--line));
+  background: color-mix(in srgb, #efbc67 16%, var(--paper));
+}
+
+.profile-checks {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.profile-check {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 11px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 11px 12px;
+  background: var(--paper-strong);
+}
+
+.profile-check-mark {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border-radius: 50%;
+  color: white;
+  background: #6dad7b;
+  font-weight: 850;
+}
+
+.profile-check--warn .profile-check-mark {
+  background: #ce9345;
+}
+
+.profile-check--fail .profile-check-mark {
+  background: #a69ca0;
+}
+
+.profile-check > span:nth-child(2) {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.profile-check strong {
+  font-size: 13px;
+}
+
+.profile-check small {
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+}
+
+.profile-check > b {
+  color: var(--shell-primary);
+  font-size: 12px;
+}
+
+.profile-method-note {
+  margin: 16px 2px 0;
+  color: var(--ink-muted);
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .form-columns {

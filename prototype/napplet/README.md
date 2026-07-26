@@ -12,6 +12,10 @@ operating-system desktop overlay.
 - Publishes user-written top-level notes through NAP-OUTBOX.
 - Uses a reply to another person's verified note as medicine.
 - Publishes replaceable kind `30078` appearance settings.
+- Calculates an eight-check Nostr habitat score from profile metadata, NIP-05,
+  media hosting, Lightning, relays, follows, and NIP-60 wallet events.
+- Combines habitat health with activity into Radiant, Thriving, Unsettled, and
+  Fragile living-condition variants.
 - Reconciles live kind `1` events and shows partial-sync status.
 - Supports optional shell theme and storage domains with safe fallbacks.
 - Includes a visual-state lab that never changes canonical Nostr state.
@@ -44,9 +48,11 @@ simulator so test events do not reach public relays.
 ## Napplet boundaries
 
 - Required domains: `identity`, `outbox`.
-- Optional domains: `storage`, `theme`.
+- Optional domains: `resource`, `storage`, `theme`.
 - No direct network, signer, relay pool, key, or browser persistence access.
 - Normal social reads and publishes are OUTBOX-first.
+- When NIP-65 is absent, publishes use only shell-provided relay candidates
+  passed back through Outbox; the napplet never opens relay connections.
 - The source of truth is signed Nostr history, not local UI state.
 
 The product design and exact event formats live in the repository-level

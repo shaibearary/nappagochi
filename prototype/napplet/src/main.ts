@@ -1,10 +1,14 @@
 import {
   identity,
   outbox,
+  resource,
   storage,
   themeGet,
   themeOnChanged,
+  type EventTemplate,
   type NostrEvent,
+  type OutboxPublishOptions,
+  type OutboxPublishResult,
   type OutboxSubscription,
   type ProfileData,
   type RelayEventResult,
@@ -20,6 +24,7 @@ declare global {
         getPublicKey?: unknown;
         getProfile?: unknown;
         getFollows?: unknown;
+        getRelays?: unknown;
         onChanged?: unknown;
       };
       outbox?: {
@@ -37,6 +42,9 @@ declare global {
         get?: unknown;
         onChanged?: unknown;
       };
+      resource?: {
+        bytes?: unknown;
+      };
     };
   }
 }
@@ -45,12 +53,31 @@ const BIRTH_D = 'nostr.pet.birth.v1';
 const PROFILE_D_PREFIX = 'nostr.pet.profile.v1:';
 const DAY = 86_400;
 const FUTURE_TOLERANCE = 600;
+const PROFILE_HEALTH_MAX = 8;
+const PROFILE_FIELDS: Array<keyof ProfileData> = [
+  'name',
+  'displayName',
+  'about',
+  'picture',
+  'banner',
+];
+const BLOSSOM_HOSTS = new Set([
+  'blossom.primal.net',
+  'cdn.satellite.earth',
+  'files.v0l.io',
+  'blossom.oxtr.dev',
+  'blossom.band',
+  'media.nostr.build',
+]);
 
 type PetState = 'happy' | 'content' | 'lonely' | 'sick' | 'critical' | 'dead';
 type Palette = 'peach' | 'mint' | 'night';
 type Eyes = 'round' | 'sleepy' | 'sparkle';
 type Accessory = 'none' | 'bow' | 'hat';
-type Modal = 'note' | 'doctor' | 'settings' | 'preview' | null;
+type Modal = 'note' | 'doctor' | 'settings' | 'preview' | 'profile' | null;
+type ProfileCheckStatus = 'pass' | 'warn' | 'fail';
+type ProfileTier = 'excellent' | 'healthy' | 'attention' | 'incomplete';
+type RelayPermissions = Record<string, { read: boolean; write: boolean }>;
 
 type Appearance = {
   base: 'momo-01';
@@ -83,6 +110,20 @@ type Health = {
 type DoctorCandidate = {
   event: NostrEvent;
   relayHint: string;
+};
+
+type ProfileCheck = {
+  label: string;
+  status: ProfileCheckStatus;
+  detail: string;
+  point: boolean;
+};
+
+type ProfileHealth = {
+  score: number;
+  max: number;
+  tier: ProfileTier;
+  checks: ProfileCheck[];
 };
 
 const DEFAULT_APPEARANCE: Appearance = {
@@ -143,6 +184,13 @@ const STATE_META: Record<
   },
 };
 
+const EMPTY_PROFILE_HEALTH: ProfileHealth = {
+  score: 0,
+  max: PROFILE_HEALTH_MAX,
+  tier: 'incomplete',
+  checks: [],
+};
+
 const app = document.querySelector<HTMLElement>('#app') as HTMLElement;
 if (!app) throw new Error('Missing app root');
 
@@ -154,6 +202,9 @@ let verifiedMedicineIds = new Set<string>();
 let activeBirth: Birth | null = null;
 let appearance: Appearance = { ...DEFAULT_APPEARANCE };
 let health: Health | null = null;
+let profileHealth: ProfileHealth = { ...EMPTY_PROFILE_HEALTH };
+let fallbackRelayUrls: string[] = [];
+let relayFallbackActive = false;
 let incompleteSync = false;
 let loading = true;
 let actionBusy = false;
@@ -212,6 +263,363 @@ function safeAppearance(value: unknown): Appearance {
     palette: isAllowedPalette(candidate.palette) ? candidate.palette : 'peach',
     eyes: isAllowedEyes(candidate.eyes) ? candidate.eyes : 'round',
     accessory: isAllowedAccessory(candidate.accessory) ? candidate.accessory : 'none',
+  };
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function latestEvent(events: NostrEvent[], ...kinds: number[]): NostrEvent | null {
+  return (
+    events
+      .filter((event) => kinds.includes(event.kind))
+      .sort((a, b) => b.created_at - a.created_at)[0] ?? null
+  );
+}
+
+function profileFromEvent(event: NostrEvent | null): ProfileData | null {
+  if (!event) return null;
+  try {
+    const metadata = JSON.parse(event.content) as Record<string, unknown>;
+    return {
+      name: stringValue(metadata.name),
+      displayName:
+        stringValue(metadata.display_name) || stringValue(metadata.displayName),
+      about: stringValue(metadata.about),
+      picture: stringValue(metadata.picture),
+      banner: stringValue(metadata.banner),
+      nip05: stringValue(metadata.nip05),
+      lud16: stringValue(metadata.lud16),
+      website: stringValue(metadata.website),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function relaysFromEvent(event: NostrEvent | null): RelayPermissions | null {
+  if (!event) return null;
+  const relays: RelayPermissions = {};
+  for (const tag of event.tags) {
+    if (tag[0] !== 'r' || !tag[1]) continue;
+    const marker = tag[2];
+    relays[tag[1]] = {
+      read: marker !== 'write',
+      write: marker !== 'read',
+    };
+  }
+  return relays;
+}
+
+function followsFromEvent(event: NostrEvent | null): string[] | null {
+  if (!event) return null;
+  return [
+    ...new Set(
+      event.tags
+        .filter((tag) => tag[0] === 'p' && tag[1])
+        .map((tag) => tag[1]),
+    ),
+  ];
+}
+
+function parseAddress(value: string): { name: string; domain: string } | null {
+  const input = value.trim().toLowerCase();
+  const parts = input.includes('@') ? input.split('@') : ['_', input];
+  if (
+    parts.length !== 2 ||
+    !parts[0] ||
+    !/^[a-z0-9.-]+$/i.test(parts[1]) ||
+    !parts[1].includes('.')
+  ) {
+    return null;
+  }
+  return { name: parts[0], domain: parts[1] };
+}
+
+function hasResourceDomain(): boolean {
+  return typeof window.napplet?.resource?.bytes === 'function';
+}
+
+async function readJsonResource(url: string): Promise<Record<string, unknown>> {
+  if (!hasResourceDomain()) throw new Error('Resource domain unavailable');
+  const blob = await resource.bytes(url);
+  const parsed: unknown = JSON.parse(await blob.text());
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Invalid JSON response');
+  }
+  return parsed as Record<string, unknown>;
+}
+
+async function checkNip05(value: string, owner: string): Promise<ProfileCheck> {
+  if (!value) {
+    return { label: 'NIP-05', status: 'fail', detail: 'Not set', point: false };
+  }
+  const address = parseAddress(value);
+  if (!address) {
+    return {
+      label: 'NIP-05',
+      status: 'warn',
+      detail: `${value} is not a valid identifier`,
+      point: false,
+    };
+  }
+  if (!hasResourceDomain()) {
+    return {
+      label: 'NIP-05',
+      status: 'warn',
+      detail: `${value} could not be verified in this shell`,
+      point: false,
+    };
+  }
+
+  try {
+    const data = await readJsonResource(
+      `https://${address.domain}/.well-known/nostr.json?name=${encodeURIComponent(address.name)}`,
+    );
+    const names = data.names;
+    const resolved =
+      names && typeof names === 'object'
+        ? (names as Record<string, unknown>)[address.name]
+        : undefined;
+    return resolved === owner
+      ? { label: 'NIP-05', status: 'pass', detail: value, point: true }
+      : {
+          label: 'NIP-05',
+          status: 'warn',
+          detail: `${value} does not resolve to this profile`,
+          point: false,
+        };
+  } catch {
+    return {
+      label: 'NIP-05',
+      status: 'warn',
+      detail: `${value} could not be verified`,
+      point: false,
+    };
+  }
+}
+
+async function checkLightning(value: string): Promise<ProfileCheck> {
+  if (!value) {
+    return {
+      label: 'Lightning address',
+      status: 'fail',
+      detail: 'Not set',
+      point: false,
+    };
+  }
+  const address = parseAddress(value);
+  if (!address || address.name === '_') {
+    return {
+      label: 'Lightning address',
+      status: 'warn',
+      detail: `${value} is not valid`,
+      point: false,
+    };
+  }
+  if (!hasResourceDomain()) {
+    return {
+      label: 'Lightning address',
+      status: 'warn',
+      detail: `${value} could not be verified in this shell`,
+      point: false,
+    };
+  }
+
+  try {
+    const data = await readJsonResource(
+      `https://${address.domain}/.well-known/lnurlp/${encodeURIComponent(address.name)}`,
+    );
+    return stringValue(data.callback)
+      ? { label: 'Lightning address', status: 'pass', detail: value, point: true }
+      : {
+          label: 'Lightning address',
+          status: 'warn',
+          detail: `${value} returned no callback`,
+          point: false,
+        };
+  } catch {
+    return {
+      label: 'Lightning address',
+      status: 'warn',
+      detail: `${value} could not be verified`,
+      point: false,
+    };
+  }
+}
+
+function profileDomain(nip05: string): string {
+  const address = parseAddress(nip05);
+  return address?.name === '_' ? address.domain : '';
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function checkProfileImage(
+  label: string,
+  rawUrl: string,
+  ownDomain: string,
+): Promise<ProfileCheck> {
+  if (!rawUrl) {
+    return { label, status: 'fail', detail: 'Not set', point: false };
+  }
+
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+    if (url.protocol !== 'https:') throw new Error('Unsupported URL');
+  } catch {
+    return { label, status: 'fail', detail: 'Invalid URL', point: false };
+  }
+
+  if (!hasResourceDomain()) {
+    return {
+      label,
+      status: 'warn',
+      detail: 'Could not verify in this shell',
+      point: false,
+    };
+  }
+
+  try {
+    const blob = await resource.bytes(rawUrl);
+    const host = url.hostname.toLowerCase();
+    const hosting = BLOSSOM_HOSTS.has(host)
+      ? 'Blossom'
+      : ownDomain && host === ownDomain
+        ? 'own domain'
+        : 'third-party host';
+    const tooLarge = blob.size > 1024 * 1024;
+    const trusted = hosting !== 'third-party host';
+    return {
+      label,
+      status: trusted && !tooLarge ? 'pass' : 'warn',
+      detail: `${hosting} · ${formatBytes(blob.size)}${tooLarge ? ' · large file' : ''}`,
+      point: trusted,
+    };
+  } catch {
+    return { label, status: 'warn', detail: 'Could not verify the image', point: false };
+  }
+}
+
+function checkProfileMetadata(profile: ProfileData | null): ProfileCheck {
+  if (!profile) {
+    return {
+      label: 'Profile',
+      status: 'fail',
+      detail: 'No kind 0 profile found',
+      point: false,
+    };
+  }
+  const present = PROFILE_FIELDS.filter((field) => stringValue(profile[field])).length;
+  const missing = PROFILE_FIELDS.length - present;
+  return {
+    label: 'Profile',
+    status: present >= 3 ? 'pass' : present > 0 ? 'warn' : 'fail',
+    detail: `${present}/5 fields${missing ? ` · ${missing} missing` : ' · complete'}`,
+    point: present > 0,
+  };
+}
+
+function checkRelays(
+  relays: RelayPermissions,
+  dmEvent: NostrEvent | null,
+): ProfileCheck {
+  const entries = Object.values(relays);
+  const read = entries.filter((relay) => relay.read).length;
+  const write = entries.filter((relay) => relay.write).length;
+  const dmCount =
+    dmEvent?.tags.filter((tag) => tag[0] === 'relay' && tag[1]).length ?? 0;
+  return {
+    label: 'Relay setup',
+    status: entries.length >= 2 ? (dmCount ? 'pass' : 'warn') : entries.length ? 'warn' : 'fail',
+    detail: `${entries.length} public · ${read} read · ${write} write · ${
+      dmCount ? `${dmCount} DM` : 'no DM list'
+    }`,
+    point: entries.length >= 2,
+  };
+}
+
+function checkFollows(follows: string[]): ProfileCheck {
+  return follows.length
+    ? {
+        label: 'Follow list',
+        status: 'pass',
+        detail: `${follows.length} ${follows.length === 1 ? 'follow' : 'follows'}`,
+        point: true,
+      }
+    : {
+        label: 'Follow list',
+        status: 'fail',
+        detail: 'No follows found',
+        point: false,
+      };
+}
+
+function checkWallet(
+  walletEvent: NostrEvent | null,
+  nutzapEvent: NostrEvent | null,
+): ProfileCheck {
+  if (!walletEvent) {
+    return {
+      label: 'NIP-60 wallet',
+      status: 'fail',
+      detail: 'No wallet event found',
+      point: false,
+    };
+  }
+  return {
+    label: 'NIP-60 wallet',
+    status: nutzapEvent ? 'pass' : 'warn',
+    detail: `${walletEvent.kind === 37_375 ? 'legacy wallet' : 'wallet found'} · ${
+      nutzapEvent ? 'nutzaps ready' : 'no nutzap info'
+    }`,
+    point: true,
+  };
+}
+
+function profileTierFor(score: number): ProfileTier {
+  if (score === PROFILE_HEALTH_MAX) return 'excellent';
+  if (score >= 6) return 'healthy';
+  if (score >= 4) return 'attention';
+  return 'incomplete';
+}
+
+async function calculateProfileHealth(
+  owner: string,
+  profile: ProfileData | null,
+  follows: string[],
+  relays: RelayPermissions,
+  events: NostrEvent[],
+): Promise<ProfileHealth> {
+  const ownDomain = profileDomain(stringValue(profile?.nip05));
+  const [nip05, picture, banner, lightning] = await Promise.all([
+    checkNip05(stringValue(profile?.nip05), owner),
+    checkProfileImage('Profile picture', stringValue(profile?.picture), ownDomain),
+    checkProfileImage('Banner', stringValue(profile?.banner), ownDomain),
+    checkLightning(stringValue(profile?.lud16)),
+  ]);
+  const checks = [
+    checkProfileMetadata(profile),
+    nip05,
+    picture,
+    banner,
+    lightning,
+    checkRelays(relays, latestEvent(events, 10_050)),
+    checkFollows(follows),
+    checkWallet(latestEvent(events, 17_375, 37_375), latestEvent(events, 10_019)),
+  ];
+  const score = checks.filter((check) => check.point).length;
+  return {
+    score,
+    max: PROFILE_HEALTH_MAX,
+    tier: profileTierFor(score),
+    checks,
   };
 }
 
@@ -442,12 +850,27 @@ async function load(): Promise<void> {
       notes = [];
       activeBirth = null;
       health = null;
+      profileHealth = { ...EMPTY_PROFILE_HEALTH };
+      fallbackRelayUrls = [];
+      relayFallbackActive = false;
       loading = false;
       render();
       return;
     }
 
     const profilePromise = identity.getProfile();
+    const followsPromise = identity.getFollows().catch(() => [] as string[]);
+    const relaysPromise = identity.getRelays().catch(() => ({} as RelayPermissions));
+    const profileHealthEventsPromise = outbox.query(
+      [
+        {
+          authors: [pubkey],
+          kinds: [0, 3, 10_002, 10_019, 10_050, 17_375, 37_375],
+          limit: 20,
+        },
+      ],
+      { authors: [pubkey], limit: 20, timeoutMs: 8_000 },
+    );
     const birthPromise = outbox.query(
       [{ authors: [pubkey], kinds: [78], '#d': [BIRTH_D], limit: 100 }],
       { authors: [pubkey], limit: 100, timeoutMs: 6_000 },
@@ -458,13 +881,40 @@ async function load(): Promise<void> {
       timeoutMs: 8_000,
     });
 
-    const [profile, birthResult, noteResult] = await Promise.all([
-      profilePromise,
-      birthPromise,
-      notePromise,
-    ]);
-    accountName = profileLabel(profile);
-    incompleteSync = Boolean(birthResult.incomplete || noteResult.incomplete);
+    const [profile, follows, identityRelays, profileHealthResult, birthResult, noteResult] =
+      await Promise.all([
+        profilePromise,
+        followsPromise,
+        relaysPromise,
+        profileHealthEventsPromise,
+        birthPromise,
+        notePromise,
+      ]);
+    const profileEvents = profileHealthResult.events.map((item) => item.event);
+    const relayListEvent = latestEvent(profileEvents, 10_002);
+    const eventProfile = profileFromEvent(latestEvent(profileEvents, 0));
+    const eventFollows = followsFromEvent(latestEvent(profileEvents, 3));
+    const currentProfile = eventProfile ?? profile;
+    const currentFollows = eventFollows ?? follows;
+    const currentRelays = relaysFromEvent(relayListEvent) ?? identityRelays;
+
+    fallbackRelayUrls = uniqueRelayUrls(
+      Object.entries(identityRelays)
+        .filter(([, permissions]) => permissions.write)
+        .map(([url]) => url),
+    );
+    relayFallbackActive = !relayListEvent && fallbackRelayUrls.length > 0;
+    profileHealth = await calculateProfileHealth(
+      pubkey,
+      currentProfile,
+      currentFollows,
+      currentRelays,
+      profileEvents,
+    );
+    accountName = profileLabel(currentProfile);
+    incompleteSync = Boolean(
+      profileHealthResult.incomplete || birthResult.incomplete || noteResult.incomplete,
+    );
     births = birthResult.events
       .map((item) => parseBirth(item.event))
       .filter((birth): birth is Birth => Boolean(birth));
@@ -487,6 +937,59 @@ function profileLabel(profile: ProfileData | null): string {
   return profile?.displayName?.trim() || profile?.name?.trim() || shortKey(pubkey);
 }
 
+function uniqueRelayUrls(values: string[]): string[] {
+  return [
+    ...new Set(
+      values
+        .map((value) => value.trim())
+        .filter((value) => /^wss?:\/\/[^/\s]+/i.test(value)),
+    ),
+  ];
+}
+
+function profileTierLabel(tier: ProfileTier): string {
+  if (tier === 'excellent') return 'Excellent';
+  if (tier === 'healthy') return 'Healthy';
+  if (tier === 'attention') return 'Needs attention';
+  return 'Incomplete';
+}
+
+function displayedCondition(state: PetState): { label: string; note: string } {
+  if (state === 'happy') {
+    if (profileHealth.score === PROFILE_HEALTH_MAX) {
+      return {
+        label: 'Radiant',
+        note: 'Bright-eyed, active, and flourishing in an excellent Nostr habitat.',
+      };
+    }
+    if (profileHealth.score >= 6) return STATE_META.happy;
+    if (profileHealth.score >= 4) {
+      return {
+        label: 'Unsettled',
+        note: 'Active and safe, but its Nostr habitat could use a little care.',
+      };
+    }
+    return {
+      label: 'Fragile',
+      note: 'Active and alive, though its Nostr habitat is still very sparse.',
+    };
+  }
+  if (state === 'content') {
+    if (profileHealth.score >= 6) return STATE_META.content;
+    if (profileHealth.score >= 4) {
+      return {
+        label: 'Unsettled',
+        note: 'Cozy for now, with a few gaps in its Nostr habitat.',
+      };
+    }
+    return {
+      label: 'Fragile',
+      note: 'Calm for now, but its Nostr habitat needs more support.',
+    };
+  }
+  return STATE_META[state];
+}
+
 function formatDate(timestamp: number): string {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(timestamp * 1000);
 }
@@ -503,7 +1006,11 @@ function effectiveState(): PetState {
   return previewState ?? health?.state ?? 'happy';
 }
 
-function petMarkup(state: PetState, petAppearance: Appearance): string {
+function petMarkup(
+  state: PetState,
+  petAppearance: Appearance,
+  conditionLabel = STATE_META[state].label,
+): string {
   const accessory =
     petAppearance.accessory === 'bow'
       ? '<span class="pet-accessory bow" aria-hidden="true">◆</span>'
@@ -514,7 +1021,7 @@ function petMarkup(state: PetState, petAppearance: Appearance): string {
 
   return `
     <div class="pet pet--${state} palette--${petAppearance.palette}" role="img"
-      aria-label="${escapeHtml(STATE_META[state].label)} Nostr pet">
+      aria-label="${escapeHtml(conditionLabel)} Nostr pet">
       <span class="pet-shadow"></span>
       <span class="pet-ear pet-ear--left"></span>
       <span class="pet-ear pet-ear--right"></span>
@@ -583,7 +1090,7 @@ function adoptionMarkup(previous?: Birth): string {
         <span class="spark spark--one">✦</span>
         <span class="spark spark--two">·</span>
       </div>
-      <form id="adopt-form" class="adoption-card">
+      <form id="adopt-form" class="adoption-card" novalidate>
         <p class="eyebrow">${isSuccessor ? 'A new chapter' : 'No pet found for this npub'}</p>
         <h1>${isSuccessor ? 'Adopt another pet' : 'Meet your Nostr companion'}</h1>
         <p>${isSuccessor
@@ -591,7 +1098,15 @@ function adoptionMarkup(previous?: Birth): string {
           : 'Its birthday will be the timestamp of a signed Nostr birth event.'}</p>
         <label>
           Pet name
-          <input name="name" maxlength="28" autocomplete="off" placeholder="Momo" required />
+          <input
+            name="name"
+            value="Momo"
+            maxlength="28"
+            autocomplete="off"
+            aria-describedby="pet-name-help"
+            required
+          />
+          <small id="pet-name-help">Momo is ready, or type another name.</small>
         </label>
         <fieldset>
           <legend>First color</legend>
@@ -599,7 +1114,7 @@ function adoptionMarkup(previous?: Birth): string {
             ${paletteOptions('peach')}
           </div>
         </fieldset>
-        <button class="primary-button" type="submit" ${actionBusy ? 'disabled' : ''}>
+        <button class="primary-button" type="button" data-submit="adopt" ${actionBusy ? 'disabled' : ''}>
           ${actionBusy ? 'Creating signed event…' : 'Adopt this pet'}
         </button>
         <small>You will approve a kind 78 event in your Nostr host.</small>
@@ -633,7 +1148,8 @@ function petHomeMarkup(): string {
   }
 
   const shownState = effectiveState();
-  const meta = STATE_META[shownState];
+  const lifecycleMeta = STATE_META[shownState];
+  const condition = previewState ? lifecycleMeta : displayedCondition(shownState);
   const ageDays = Math.max(0, Math.floor((nowSeconds() - activeBirth.event.created_at) / DAY));
   const isPreview = Boolean(previewState);
 
@@ -644,13 +1160,13 @@ function petHomeMarkup(): string {
         <div class="ambient-shape ambient-shape--one"></div>
         <div class="ambient-shape ambient-shape--two"></div>
         <button class="pet-stage" data-action="pet-menu" aria-label="Open pet actions">
-          ${petMarkup(shownState, appearance)}
+          ${petMarkup(shownState, appearance, condition.label)}
         </button>
         <div class="state-caption">
           ${isPreview ? '<span class="preview-flag">visual preview</span>' : ''}
-          <span class="state-kicker">${escapeHtml(meta.label)}</span>
+          <span class="state-kicker">${escapeHtml(condition.label)}</span>
           <h1>${escapeHtml(activeBirth.data.name)}</h1>
-          <p>${escapeHtml(meta.note)}</p>
+          <p>${escapeHtml(condition.note)}</p>
         </div>
       </div>
 
@@ -672,7 +1188,7 @@ function petHomeMarkup(): string {
             .join('')}
         </div>
         <div class="next-state">
-          <span>${escapeHtml(meta.next)}</span>
+          <span>${escapeHtml(lifecycleMeta.next)}</span>
           <button class="text-button" data-action="preview">Preview states</button>
         </div>
 
@@ -690,6 +1206,14 @@ function petHomeMarkup(): string {
           <div><dt>Born</dt><dd>${formatDate(activeBirth.event.created_at)}</dd></div>
           <div><dt>Age</dt><dd>${ageDays} ${ageDays === 1 ? 'day' : 'days'}</dd></div>
           <div><dt>Last care</dt><dd>${formatRelative(health.lastCareAt)}</dd></div>
+          <div>
+            <dt>Habitat</dt>
+            <dd>
+              <button class="text-button habitat-link" data-action="profile">
+                ${profileHealth.score}/${profileHealth.max} · ${escapeHtml(profileTierLabel(profileHealth.tier))}
+              </button>
+            </dd>
+          </div>
           <div><dt>Proof</dt><dd>${shortKey(activeBirth.event.id)}</dd></div>
         </dl>
 
@@ -712,7 +1236,7 @@ function noteModalMarkup(): string {
         <label>Your note
           <textarea name="content" maxlength="1000" rows="5" placeholder="What’s on your mind?" required></textarea>
         </label>
-        <button class="primary-button" type="submit" ${actionBusy ? 'disabled' : ''}>
+        <button class="primary-button" type="button" data-submit="note" ${actionBusy ? 'disabled' : ''}>
           ${actionBusy ? 'Publishing…' : 'Review and publish'}
         </button>
       </form>
@@ -747,7 +1271,7 @@ function doctorModalMarkup(): string {
             <label>Your reply
               <textarea name="content" maxlength="1000" rows="4" placeholder="Add something thoughtful…" required></textarea>
             </label>
-            <button class="primary-button" type="submit" ${actionBusy ? 'disabled' : ''}>
+            <button class="primary-button" type="button" data-submit="doctor" ${actionBusy ? 'disabled' : ''}>
               ${actionBusy ? 'Publishing reply…' : 'Reply and give medicine'}
             </button>
           </form>`
@@ -782,7 +1306,12 @@ function settingsModalMarkup(): string {
           </label>
         </div>
         <p class="modal-copy">Saving publishes a replaceable kind 30078 appearance event. It does not alter the birth event.</p>
-        <button class="primary-button" type="submit" ${actionBusy || health?.state === 'dead' ? 'disabled' : ''}>
+        <button
+          class="primary-button"
+          type="button"
+          data-submit="settings"
+          ${actionBusy || health?.state === 'dead' ? 'disabled' : ''}
+        >
           ${health?.state === 'dead' ? 'Memorial appearance is fixed' : actionBusy ? 'Saving…' : 'Save appearance'}
         </button>
       </form>
@@ -819,6 +1348,52 @@ function previewModalMarkup(): string {
   );
 }
 
+function profileModalMarkup(): string {
+  const checks = profileHealth.checks
+    .map(
+      (check) => `
+        <li class="profile-check profile-check--${check.status}">
+          <span class="profile-check-mark" aria-hidden="true">${
+            check.status === 'pass' ? '✓' : check.status === 'warn' ? '!' : '×'
+          }</span>
+          <span>
+            <strong>${escapeHtml(check.label)}</strong>
+            <small>${escapeHtml(check.detail)}</small>
+          </span>
+          <b aria-label="${check.point ? 'Contributes one point' : 'No point'}">${
+            check.point ? '+1' : '—'
+          }</b>
+        </li>`,
+    )
+    .join('');
+
+  return modalFrame(
+    'Nostr habitat',
+    `
+      <div class="profile-score-card profile-score-card--${profileHealth.tier}">
+        <span><strong>${profileHealth.score}</strong> / ${profileHealth.max}</span>
+        <div>
+          <b>${escapeHtml(profileTierLabel(profileHealth.tier))}</b>
+          <small>Profile-health habitat score</small>
+        </div>
+      </div>
+      <p class="modal-copy">
+        This score enriches a living pet’s condition. Activity alone controls sickness,
+        recovery, and irreversible death.
+      </p>
+      ${
+        checks
+          ? `<ul class="profile-checks">${checks}</ul>`
+          : '<div class="empty-state"><strong>No profile checks loaded</strong><p>Try reopening this view after your Nostr data has synced.</p></div>'
+      }
+      <p class="profile-method-note">
+        Eight checks: profile, NIP-05, picture, banner, Lightning address, relay setup,
+        follows, and NIP-60 wallet. External checks use the shell’s resource boundary.
+      </p>
+    `,
+  );
+}
+
 function modalFrame(title: string, body: string): string {
   return `
     <div class="modal-backdrop" data-action="close-modal">
@@ -838,6 +1413,7 @@ function modalMarkup(): string {
   if (modal === 'doctor') return doctorModalMarkup();
   if (modal === 'settings') return settingsModalMarkup();
   if (modal === 'preview') return previewModalMarkup();
+  if (modal === 'profile') return profileModalMarkup();
   return '';
 }
 
@@ -883,10 +1459,10 @@ function render(): void {
 }
 
 function bindInteractions(): void {
-  document.querySelector<HTMLFormElement>('#adopt-form')?.addEventListener('submit', handleAdopt);
-  document.querySelector<HTMLFormElement>('#note-form')?.addEventListener('submit', handleNote);
-  document.querySelector<HTMLFormElement>('#doctor-form')?.addEventListener('submit', handleDoctor);
-  document.querySelector<HTMLFormElement>('#settings-form')?.addEventListener('submit', handleSettings);
+  bindActionForm('adopt-form', 'adopt', handleAdopt, true);
+  bindActionForm('note-form', 'note', handleNote);
+  bindActionForm('doctor-form', 'doctor', handleDoctor);
+  bindActionForm('settings-form', 'settings', handleSettings);
 
   document.querySelectorAll<HTMLElement>('[data-action]').forEach((element) => {
     element.addEventListener('click', (event) => {
@@ -911,6 +1487,9 @@ function bindInteractions(): void {
         render();
       } else if (action === 'preview') {
         modal = 'preview';
+        render();
+      } else if (action === 'profile') {
+        modal = 'profile';
         render();
       } else if (action === 'clear-preview') {
         previewState = null;
@@ -939,14 +1518,71 @@ function bindInteractions(): void {
   });
 }
 
-async function handleAdopt(event: SubmitEvent): Promise<void> {
-  event.preventDefault();
-  const form = event.currentTarget as HTMLFormElement;
+function bindActionForm(
+  formId: string,
+  action: string,
+  handler: (form: HTMLFormElement) => Promise<void>,
+  submitOnEnter = false,
+): void {
+  const form = document.querySelector<HTMLFormElement>(`#${formId}`);
+  const button = form?.querySelector<HTMLButtonElement>(`[data-submit="${action}"]`);
+  if (!form || !button) return;
+
+  button.addEventListener('click', () => {
+    void handler(form);
+  });
+
+  if (submitOnEnter) {
+    form.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' || event.target instanceof HTMLTextAreaElement) return;
+      event.preventDefault();
+      if (!button.disabled) void handler(form);
+    });
+  }
+}
+
+async function publishEvent(
+  template: EventTemplate,
+  options: OutboxPublishOptions = {},
+  extraFallbackRelays: string[] = [],
+): Promise<OutboxPublishResult> {
+  const explicitRelays = uniqueRelayUrls([
+    ...fallbackRelayUrls,
+    ...(options.relays ?? []),
+    ...extraFallbackRelays,
+  ]);
+  const fallbackOptions: OutboxPublishOptions = {
+    ...options,
+    relays: explicitRelays,
+    toOutbox: false,
+  };
+
+  if (relayFallbackActive && explicitRelays.length) {
+    return outbox.publish(template, fallbackOptions);
+  }
+
+  const result = await outbox.publish(template, options);
+  if (
+    !result.ok &&
+    explicitRelays.length &&
+    result.error?.toLowerCase().includes('relay list unavailable')
+  ) {
+    relayFallbackActive = true;
+    return outbox.publish(template, fallbackOptions);
+  }
+  return result;
+}
+
+async function handleAdopt(form: HTMLFormElement): Promise<void> {
   const data = new FormData(form);
   const name = String(data.get('name') ?? '').trim().slice(0, 28);
   const paletteValue = data.get('palette');
   const palette: Palette = isAllowedPalette(paletteValue) ? paletteValue : 'peach';
-  if (!name) return;
+  if (!name) {
+    message = 'Please give your pet a name.';
+    render();
+    return;
+  }
 
   actionBusy = true;
   message = '';
@@ -969,7 +1605,7 @@ async function handleAdopt(event: SubmitEvent): Promise<void> {
   if (previous) tags.push(['e', previous.event.id]);
 
   try {
-    const result = await outbox.publish({
+    const result = await publishEvent({
       kind: 78,
       content: JSON.stringify(petData),
       tags,
@@ -986,16 +1622,18 @@ async function handleAdopt(event: SubmitEvent): Promise<void> {
   }
 }
 
-async function handleNote(event: SubmitEvent): Promise<void> {
-  event.preventDefault();
-  const form = event.currentTarget as HTMLFormElement;
+async function handleNote(form: HTMLFormElement): Promise<void> {
   const content = String(new FormData(form).get('content') ?? '').trim();
-  if (!content) return;
+  if (!content) {
+    message = 'Write a note before publishing.';
+    render();
+    return;
+  }
 
   actionBusy = true;
   render();
   try {
-    const result = await outbox.publish({
+    const result = await publishEvent({
       kind: 1,
       content,
       tags: [],
@@ -1049,19 +1687,21 @@ async function loadDoctorCandidates(): Promise<void> {
   }
 }
 
-async function handleDoctor(event: SubmitEvent): Promise<void> {
-  event.preventDefault();
-  const form = event.currentTarget as HTMLFormElement;
+async function handleDoctor(form: HTMLFormElement): Promise<void> {
   const data = new FormData(form);
   const candidate = doctorCandidates[Number(data.get('candidate'))];
   const content = String(data.get('content') ?? '').trim();
-  if (!candidate || !content) return;
+  if (!candidate || !content) {
+    message = candidate ? 'Write a reply before publishing.' : 'Choose a note to reply to.';
+    render();
+    return;
+  }
 
   actionBusy = true;
   render();
   const relayHint = candidate.relayHint;
   try {
-    const result = await outbox.publish(
+    const result = await publishEvent(
       {
         kind: 1,
         content,
@@ -1072,6 +1712,7 @@ async function handleDoctor(event: SubmitEvent): Promise<void> {
         created_at: nowSeconds(),
       },
       { toOutbox: true, toInboxes: [candidate.event.pubkey] },
+      relayHint ? [relayHint] : [],
     );
     if (!result.ok) throw new Error(result.error || 'The reply was not accepted.');
     modal = null;
@@ -1085,10 +1726,8 @@ async function handleDoctor(event: SubmitEvent): Promise<void> {
   }
 }
 
-async function handleSettings(event: SubmitEvent): Promise<void> {
-  event.preventDefault();
+async function handleSettings(form: HTMLFormElement): Promise<void> {
   if (!activeBirth || health?.state === 'dead') return;
-  const form = event.currentTarget as HTMLFormElement;
   const data = new FormData(form);
   const paletteValue = data.get('palette');
   const eyesValue = data.get('eyes');
@@ -1103,7 +1742,7 @@ async function handleSettings(event: SubmitEvent): Promise<void> {
   actionBusy = true;
   render();
   try {
-    const result = await outbox.publish({
+    const result = await publishEvent({
       kind: 30_078,
       content: JSON.stringify({ v: 1, name: activeBirth.data.name, appearance: nextAppearance }),
       tags: [

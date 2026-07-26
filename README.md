@@ -39,6 +39,8 @@ events off public relays.
   sick or critical pet.
 - Prolonged inactivity makes the pet lonely, sick, critical, and finally dead.
 - Death is terminal for that pet. The owner may create a new pet afterward.
+- An eight-check Nostr profile-health score enriches the pet's habitat and
+  visible condition without controlling sickness, death, or recovery.
 - Appearance is customizable without rewriting the pet's birth history.
 
 ## Protocol recommendation
@@ -60,6 +62,7 @@ limitations are in [docs/02-nostr-protocol-design.md](docs/02-nostr-protocol-des
 7. [Research sources](docs/07-research-sources.md)
 8. [Napplet prototype specification](docs/08-napplet-prototype-spec.md)
 9. [Prototype build report](docs/09-prototype-build-report.md)
+10. [Profile-health integration](docs/10-profile-health-integration.md)
 
 ## Decisions already made for the plan
 
