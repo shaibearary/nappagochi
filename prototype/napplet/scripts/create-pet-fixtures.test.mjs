@@ -76,6 +76,35 @@ test('medicine fixture contains a verifiable other-author parent and owner reply
   assert.notEqual(parent.pubkey, result.pubkey);
 });
 
+test('doctor fixtures cover public discovery and followed-account priority', () => {
+  const happy = buildScenario({
+    id: 'happy',
+    secretKey: TEST_SECRET,
+    now: NOW,
+  });
+  const discoveryNote = happy.events.find(
+    (event) => event.kind === 1 && event.pubkey !== happy.pubkey,
+  );
+  assert.ok(discoveryNote);
+  assert.equal(happy.events.some((event) => event.kind === 3 && event.pubkey === happy.pubkey), false);
+
+  const content = buildScenario({
+    id: 'content',
+    secretKey: TEST_SECRET,
+    now: NOW,
+  });
+  const contactList = content.events.find(
+    (event) => event.kind === 3 && event.pubkey === content.pubkey,
+  );
+  const followedPubkey = contactList?.tags.find((tag) => tag[0] === 'p')?.[1];
+  assert.ok(followedPubkey);
+  assert.ok(
+    content.events.some(
+      (event) => event.kind === 1 && event.pubkey === followedPubkey,
+    ),
+  );
+});
+
 test('successor fixture references a predecessor born more than 45 days earlier', () => {
   const result = buildScenario({
     id: 'successor',

@@ -52,6 +52,7 @@ declare global {
 const BIRTH_D = 'nostr.pet.birth.v1';
 const PROFILE_D_PREFIX = 'nostr.pet.profile.v1:';
 const DAY = 86_400;
+const DOCTOR_DISCOVERY_LOOKBACK = 7 * DAY;
 const FUTURE_TOLERANCE = 600;
 const PROFILE_HEALTH_MAX = 8;
 const PROFILE_FIELDS: Array<keyof ProfileData> = [
@@ -117,6 +118,7 @@ type DoctorCandidate = {
   event: NostrEvent;
   relayHint: string;
 };
+type DoctorSource = 'follows' | 'discovery' | null;
 
 type ProfileCheck = {
   label: string;
@@ -218,6 +220,7 @@ let message = '';
 let modal: Modal = null;
 let previewState: PetState | null = null;
 let doctorCandidates: DoctorCandidate[] = [];
+let doctorSource: DoctorSource = null;
 let doctorLoading = false;
 let liveSubscription: OutboxSubscription | null = null;
 let identitySubscription: Subscription | null = null;
@@ -1265,6 +1268,10 @@ function noteModalMarkup(): string {
 }
 
 function doctorModalMarkup(): string {
+  const sourceCopy =
+    doctorSource === 'follows'
+      ? 'These are recent notes from people you follow.'
+      : 'No usable follow notes were found, so these are recent public Discover notes—not a universal trending ranking.';
   const candidates = doctorCandidates
     .map(
       (candidate, index) => `
@@ -1282,12 +1289,16 @@ function doctorModalMarkup(): string {
   return modalFrame(
     'Visit the doctor',
     doctorLoading
-      ? '<div class="doctor-loading">Finding recent notes from people you follow…</div>'
+      ? '<div class="doctor-loading">Finding recent notes for a helpful reply…</div>'
       : doctorCandidates.length
         ? `
           <p class="modal-copy">Choose a real note and write a real reply. Publishing it creates verified medicine.</p>
+          <p class="modal-copy">${sourceCopy}</p>
           <form id="doctor-form">
-            <fieldset class="note-choices"><legend>Reply to</legend>${candidates}</fieldset>
+            <fieldset class="note-choices">
+              <legend>${doctorSource === 'follows' ? 'From your follows' : 'Discover notes'}</legend>
+              ${candidates}
+            </fieldset>
             <label>Your reply
               <textarea name="content" maxlength="1000" rows="4" placeholder="Add something thoughtful…" required></textarea>
             </label>
@@ -1297,8 +1308,8 @@ function doctorModalMarkup(): string {
           </form>`
         : `
           <div class="empty-state">
-            <strong>No reply candidates found</strong>
-            <p>Follow a few people or wait for their recent kind 1 notes to reach your outbox routes.</p>
+            <strong>No recent public notes found</strong>
+            <p>Try again when your shell’s outbox routes have recent public kind 1 notes.</p>
             <button class="secondary-button" data-action="reload-doctor">Try again</button>
           </div>`,
   );
@@ -1499,6 +1510,7 @@ function bindInteractions(): void {
       } else if (action === 'doctor') {
         modal = 'doctor';
         doctorCandidates = [];
+        doctorSource = null;
         doctorLoading = true;
         render();
         void loadDoctorCandidates();
@@ -1516,6 +1528,8 @@ function bindInteractions(): void {
         void rememberPreview(null);
         render();
       } else if (action === 'reload-doctor') {
+        doctorCandidates = [];
+        doctorSource = null;
         doctorLoading = true;
         render();
         void loadDoctorCandidates();
@@ -1674,36 +1688,93 @@ async function handleNote(form: HTMLFormElement): Promise<void> {
   }
 }
 
+function selectDoctorCandidates(
+  results: RelayEventResult[],
+  allowedAuthors?: Set<string>,
+): DoctorCandidate[] {
+  const earliest = nowSeconds() - DOCTOR_DISCOVERY_LOOKBACK;
+  const latest = nowSeconds() + FUTURE_TOLERANCE;
+  const uniqueAuthors = new Set<string>();
+  return results
+    .filter(
+      ({ event }) =>
+        event.kind === 1 &&
+        event.pubkey !== pubkey &&
+        event.created_at >= earliest &&
+        event.created_at <= latest &&
+        !hasReplyTag(event) &&
+        event.content.trim().length > 0 &&
+        (!allowedAuthors || allowedAuthors.has(event.pubkey)),
+    )
+    .sort((left, right) => right.event.created_at - left.event.created_at)
+    .filter(({ event }) => {
+      if (uniqueAuthors.has(event.pubkey)) return false;
+      uniqueAuthors.add(event.pubkey);
+      return true;
+    })
+    .slice(0, 6)
+    .map((item) => ({
+      event: item.event,
+      relayHint: item.sidecar?.relayHints?.[0] ?? '',
+    }));
+}
+
 async function loadDoctorCandidates(): Promise<void> {
+  doctorSource = null;
   try {
-    const follows = (await identity.getFollows()).filter((key) => key !== pubkey).slice(0, 30);
-    if (!follows.length) {
-      doctorCandidates = [];
-      return;
+    const follows = (await identity.getFollows().catch(() => []))
+      .filter((key) => key !== pubkey)
+      .slice(0, 30);
+    if (follows.length) {
+      try {
+        const result = await outbox.query(
+          [
+            {
+              authors: follows,
+              kinds: [1],
+              since: nowSeconds() - DOCTOR_DISCOVERY_LOOKBACK,
+              limit: 60,
+            },
+          ],
+          {
+            authors: follows,
+            limit: 60,
+            timeoutMs: 7_000,
+          },
+        );
+        incompleteSync ||= Boolean(result.incomplete);
+        const followedCandidates = selectDoctorCandidates(result.events, new Set(follows));
+        if (followedCandidates.length) {
+          doctorCandidates = followedCandidates;
+          doctorSource = 'follows';
+          return;
+        }
+      } catch {
+        // Public discovery below keeps the doctor usable when follow routes are unavailable.
+      }
     }
-    const result = await outbox.query([{ authors: follows, kinds: [1], limit: 40 }], {
-      authors: follows,
-      limit: 40,
-      timeoutMs: 7_000,
-    });
+
+    const result = await outbox.query(
+      [
+        {
+          kinds: [1],
+          since: nowSeconds() - DOCTOR_DISCOVERY_LOOKBACK,
+          limit: 80,
+        },
+      ],
+      {
+        limit: 80,
+        timeoutMs: 7_000,
+        ...(fallbackRelayUrls.length ? { relays: fallbackRelayUrls } : {}),
+      },
+    );
     incompleteSync ||= Boolean(result.incomplete);
-    const uniqueAuthors = new Set<string>();
-    doctorCandidates = result.events
-      .filter((item) => item.event.created_at <= nowSeconds() + FUTURE_TOLERANCE)
-      .sort((a, b) => b.event.created_at - a.event.created_at)
-      .filter((item) => {
-        if (uniqueAuthors.has(item.event.pubkey)) return false;
-        uniqueAuthors.add(item.event.pubkey);
-        return true;
-      })
-      .slice(0, 6)
-      .map((item: RelayEventResult) => ({
-        event: item.event,
-        relayHint: item.sidecar?.relayHints?.[0] ?? '',
-      }));
+    doctorCandidates = selectDoctorCandidates(result.events);
+    doctorSource = doctorCandidates.length ? 'discovery' : null;
   } catch (error) {
     message = error instanceof Error ? error.message : 'Reply candidates could not be loaded.';
     doctorCandidates = [];
+    doctorSource = null;
   } finally {
     doctorLoading = false;
     render();

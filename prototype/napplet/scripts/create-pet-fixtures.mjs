@@ -152,6 +152,19 @@ function createMedicinePair(ownerSecretKey, replyCreatedAt) {
   }
 }
 
+function createOtherAuthorNote(content, createdAt) {
+  const authorSecretKey = generateSecretKey();
+  try {
+    const event = sign(authorSecretKey, noteTemplate(content, createdAt));
+    return {
+      event,
+      pubkey: getPublicKey(authorSecretKey),
+    };
+  } finally {
+    authorSecretKey.fill(0);
+  }
+}
+
 function simpleLifecycleEvents(secretKey, scenario, now, name) {
   const birthAt = now - (scenario.quietDays + 1) * DAY;
   const careAt = now - scenario.quietDays * DAY;
@@ -174,6 +187,30 @@ function simpleLifecycleEvents(secretKey, scenario, now, name) {
   if (scenario.id === 'dead') {
     const medicine = createMedicinePair(secretKey, now - 60);
     events.push(medicine.parent, medicine.reply);
+  }
+
+  if (scenario.id === 'happy') {
+    const discovery = createOtherAuthorNote(
+      'A recent public note for the doctor Discover fallback.',
+      now - 300,
+    );
+    events.push(discovery.event);
+  }
+
+  if (scenario.id === 'content') {
+    const followed = createOtherAuthorNote(
+      'A recent note from a followed account for the doctor.',
+      now - 300,
+    );
+    events.push(
+      followed.event,
+      sign(secretKey, {
+        kind: 3,
+        created_at: now - 60,
+        tags: [['p', followed.pubkey]],
+        content: '',
+      }),
+    );
   }
 
   return events;

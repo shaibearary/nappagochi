@@ -10,7 +10,8 @@ operating-system desktop overlay.
 - Creates a first pet or a successor after terminal death.
 - Derives six states from the owner's public kind `1` activity.
 - Publishes user-written top-level notes through NAP-OUTBOX.
-- Uses a reply to another person's verified note as medicine.
+- Uses a reply to another person's verified note as medicine, prioritizing
+  followed authors and falling back to recent public Discover notes.
 - Publishes replaceable kind `30078` appearance settings.
 - Calculates an eight-check Nostr habitat score from profile metadata, NIP-05,
   media hosting, Lightning, relays, follows, and NIP-60 wallet events.
@@ -47,6 +48,9 @@ The matrix command writes gitignored, owner-readable Paja configurations under
 `.pet-test/fixtures/` and prints the command for opening each account in Paja.
 Every event is signed and includes an `nevent` reference in `index.json`, but
 Paja loads it into an isolated memory relay rather than publishing publicly.
+The Happy fixture has no follows and exercises the public Discover fallback;
+the Content fixture includes one followed author and exercises the primary
+doctor route.
 
 To build one scenario from an existing disposable test key:
 
