@@ -23,12 +23,25 @@ preview must be opened through Paja or another compatible NIP-5D runtime, not
 as a standalone web page.
 
 ```bash
-PATH="$PATH:$HOME/.deno/bin" napplet paja --relay-mode memory -- pnpm vite --host 127.0.0.1
+pnpm vite --host 127.0.0.1 --port 5188
+PATH="$PATH:$HOME/.deno/bin" kehto paja \
+  --target-url http://127.0.0.1:5188/ \
+  --relay-mode memory
 ```
 
 Open the Paja runtime URL it prints. The local Paja preview and development
-signer flow were verified on 2026-07-26. The in-memory relay mode keeps test
+signer flow were verified on 2026-07-27. The in-memory relay mode keeps test
 events off public relays.
+
+To generate eight signed test accounts covering every lifecycle condition:
+
+```bash
+pnpm run test:fixtures:matrix
+```
+
+The local fixture lab can also accept a disposable test `nsec` through a hidden
+prompt. Private keys never enter the napplet or generated files. See
+[Local lifecycle test lab](docs/11-local-lifecycle-test-lab.md).
 
 ## Product premise
 
@@ -63,6 +76,7 @@ limitations are in [docs/02-nostr-protocol-design.md](docs/02-nostr-protocol-des
 8. [Napplet prototype specification](docs/08-napplet-prototype-spec.md)
 9. [Prototype build report](docs/09-prototype-build-report.md)
 10. [Profile-health integration](docs/10-profile-health-integration.md)
+11. [Local lifecycle test lab](docs/11-local-lifecycle-test-lab.md)
 
 ## Decisions already made for the plan
 

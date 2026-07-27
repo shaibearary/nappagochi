@@ -33,6 +33,33 @@ conformance build also creates a local, test-key-signed
 `dist/.nip5a-manifest.json`; the fixed key is public test material and must
 never be reused for production signing.
 
+## Test every lifecycle state
+
+Create eight signed, disposable accounts covering Happy, Content, Lonely,
+Sick, Critical, Dead, medicine recovery, and successor birth:
+
+```bash
+pnpm run test:fixtures
+pnpm run test:fixtures:matrix
+```
+
+The matrix command writes gitignored, owner-readable Paja configurations under
+`.pet-test/fixtures/` and prints the command for opening each account in Paja.
+Every event is signed and includes an `nevent` reference in `index.json`, but
+Paja loads it into an isolated memory relay rather than publishing publicly.
+
+To build one scenario from an existing disposable test key:
+
+```bash
+pnpm run test:fixture:nsec -- --scenario sick
+```
+
+The prompt hides the `nsec`; the tool never prints or writes it and overwrites
+the secret bytes before exit. Do not use a real identity or a key controlling
+funds. Private-key handling remains completely outside the production napplet.
+See [`docs/11-local-lifecycle-test-lab.md`](../../docs/11-local-lifecycle-test-lab.md)
+for all scenarios and commands.
+
 ## Preview in a real shell
 
 Start the napplet and Paja in separate terminals:
@@ -61,6 +88,8 @@ relays.
   disclosed prototype defaults back through Outbox; the napplet never opens
   relay connections.
 - The source of truth is signed Nostr history, not local UI state.
+- Local fixture generation is a separate Node development script and is absent
+  from the single-file production artifact.
 
 The product design and exact event formats live in the repository-level
 `docs/` directory.
