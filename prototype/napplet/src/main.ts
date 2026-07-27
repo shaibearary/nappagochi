@@ -69,6 +69,12 @@ const BLOSSOM_HOSTS = new Set([
   'blossom.band',
   'media.nostr.build',
 ]);
+const DEFAULT_PUBLISH_RELAYS = [
+  'wss://relay.damus.io',
+  'wss://nos.lol',
+  'wss://relay.primal.net',
+  'wss://relay.snort.social',
+];
 
 type PetState = 'happy' | 'content' | 'lonely' | 'sick' | 'critical' | 'dead';
 type Palette = 'peach' | 'mint' | 'night';
@@ -836,6 +842,14 @@ async function refreshDerivedState(): Promise<void> {
   render();
 }
 
+async function getIdentityRelays(): Promise<RelayPermissions> {
+  try {
+    return await identity.getRelays();
+  } catch {
+    return {};
+  }
+}
+
 async function load(): Promise<void> {
   loading = true;
   message = '';
@@ -860,7 +874,7 @@ async function load(): Promise<void> {
 
     const profilePromise = identity.getProfile();
     const followsPromise = identity.getFollows().catch(() => [] as string[]);
-    const relaysPromise = identity.getRelays().catch(() => ({} as RelayPermissions));
+    const relaysPromise = getIdentityRelays();
     const profileHealthEventsPromise = outbox.query(
       [
         {
@@ -899,11 +913,14 @@ async function load(): Promise<void> {
     const currentRelays = relaysFromEvent(relayListEvent) ?? identityRelays;
 
     fallbackRelayUrls = uniqueRelayUrls(
-      Object.entries(identityRelays)
-        .filter(([, permissions]) => permissions.write)
-        .map(([url]) => url),
+      [
+        ...Object.entries(identityRelays)
+          .filter(([, permissions]) => permissions.write)
+          .map(([url]) => url),
+        ...DEFAULT_PUBLISH_RELAYS,
+      ],
     );
-    relayFallbackActive = !relayListEvent && fallbackRelayUrls.length > 0;
+    relayFallbackActive = !relayListEvent;
     profileHealth = await calculateProfileHealth(
       pubkey,
       currentProfile,
@@ -1117,7 +1134,10 @@ function adoptionMarkup(previous?: Birth): string {
         <button class="primary-button" type="button" data-submit="adopt" ${actionBusy ? 'disabled' : ''}>
           ${actionBusy ? 'Creating signed event…' : 'Adopt this pet'}
         </button>
-        <small>You will approve a kind 78 event in your Nostr host.</small>
+        <small>
+          You will approve a kind 78 event in your Nostr host. If your account has
+          no relay list, the host will try the prototype’s fallback relays.
+        </small>
       </form>
     </section>
   `;
@@ -1612,8 +1632,8 @@ async function handleAdopt(form: HTMLFormElement): Promise<void> {
       created_at: nowSeconds(),
     });
     if (!result.ok) throw new Error(result.error || 'The birth event was not accepted.');
-    message = `${name} has been born.`;
     await load();
+    message = `${name} has been born.`;
   } catch (error) {
     message = error instanceof Error ? error.message : 'The birth event could not be published.';
   } finally {
@@ -1641,8 +1661,11 @@ async function handleNote(form: HTMLFormElement): Promise<void> {
     });
     if (!result.ok) throw new Error(result.error || 'The note was not accepted.');
     modal = null;
-    message = health?.canFeed ? 'Note published. Your pet enjoyed the meal.' : 'Note published.';
+    const successMessage = health?.canFeed
+      ? 'Note published. Your pet enjoyed the meal.'
+      : 'Note published.';
     await load();
+    message = successMessage;
   } catch (error) {
     message = error instanceof Error ? error.message : 'The note could not be published.';
   } finally {
@@ -1716,8 +1739,8 @@ async function handleDoctor(form: HTMLFormElement): Promise<void> {
     );
     if (!result.ok) throw new Error(result.error || 'The reply was not accepted.');
     modal = null;
-    message = 'Reply published. The verified medicine is working.';
     await load();
+    message = 'Reply published. The verified medicine is working.';
   } catch (error) {
     message = error instanceof Error ? error.message : 'The reply could not be published.';
   } finally {
