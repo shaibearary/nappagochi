@@ -73,15 +73,18 @@ still publishes through NAP-OUTBOX; Paja owns the WebSocket connection.
 For deterministic recovery without public relay discovery, including copying
 an already-signed pet event into the loopback relay, see
 [`docs/14-local-only-debug-mode.md`](../../docs/14-local-only-debug-mode.md).
-With the relay and Vite server running, start that test page with:
+Start the relay, Vite, and Paja together with:
 
 ```bash
-pnpm paja:debug
+pnpm demo:local
 ```
 
 Open `http://127.0.0.1:5197/`. Its Paja Signer panel includes a temporary
 **Test nsec** password field for disposable keys. The field belongs to the local
-shell, not the napplet, and the secret is cleared on refresh.
+shell, not the napplet, and the secret is cleared on refresh. Keep the
+`demo:local` command running; one Ctrl+C stops all three services. If any
+service exits unexpectedly, the command identifies it and shuts down the
+remaining services instead of leaving a stale half-running preview.
 
 ## Preview in a real shell
 
