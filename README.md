@@ -48,6 +48,11 @@ then run `pnpm paja:debug`. Open `http://127.0.0.1:5197/` and use the
 **Test nsec** field in Paja's Signer panel with a disposable key. See
 [Local-only debug mode](docs/14-local-only-debug-mode.md).
 
+For normal NIP-07 testing with local persistence, keep the loopback relay
+running and use `pnpm paja:hybrid`. The shell follows NIP-65 and mirrors to the
+local relay; if NIP-65 is unavailable, it uses local plus the public fallback
+relays. See [Hybrid relay policy](docs/16-hybrid-relay-policy.md).
+
 ## Product premise
 
 - A Nostr account can create a pet by signing a birth event.
@@ -85,6 +90,8 @@ limitations are in [docs/02-nostr-protocol-design.md](docs/02-nostr-protocol-des
 12. [Demo runbook](docs/12-demo-runbook.md)
 13. [Local relay persistence test](docs/13-local-relay-test.md)
 14. [Local-only debug mode](docs/14-local-only-debug-mode.md)
+15. [NIP-07 publish and pulse diagnostics](docs/15-nip07-publish-pulse-debug.md)
+16. [Hybrid relay policy](docs/16-hybrid-relay-policy.md)
 
 ## Decisions already made for the plan
 
@@ -97,7 +104,7 @@ limitations are in [docs/02-nostr-protocol-design.md](docs/02-nostr-protocol-des
   posting requires a connected signer.
 - Default lifecycle is forgiving: death occurs after 45 days without a
   qualifying recovery.
-- The app uses the user's NIP-65 write relays plus an optional user-selected
-  durable storage relay.
+- The prototype uses the user's NIP-65 relays plus a loopback persistence
+  mirror; without NIP-65 it uses the mirror plus disclosed public fallbacks.
 - The pet state is derived from signed source events; mutable status events are
   not authoritative.

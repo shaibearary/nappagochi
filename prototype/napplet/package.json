@@ -23,6 +23,7 @@
     "test:local-relay": "node --test scripts/local-test-relay.test.mjs",
     "relay:local": "deno run --allow-net=127.0.0.1:7777 --allow-read=.pet-test/local-relay --allow-write=.pet-test/local-relay scripts/local-test-relay.ts --port 7777 --data .pet-test/local-relay/events.json",
     "paja:debug": "node scripts/start-paja-nsec-debug.mjs",
+    "paja:hybrid": "kehto paja --target-url http://127.0.0.1:5188/ --identity-mode anonymous --relay-mode live --relay-url ws://127.0.0.1:7777 --relay-url wss://nos.lol --relay-url wss://relay.damus.io --relay-url wss://relay.primal.net --relay-url wss://relay.snort.social --storage-mode memory --port 5197",
     "relay:copy": "node scripts/copy-events-to-local-relay.mjs",
     "relay:query": "node scripts/query-local-relay.mjs --relay ws://127.0.0.1:7777"
   },

@@ -101,6 +101,7 @@ select:focus-visible {
 .prototype-pill,
 .sync-pill,
 .local-relay-pill,
+.hybrid-relay-pill,
 .preview-flag {
   padding: 4px 8px;
   border-radius: 999px;
@@ -124,6 +125,11 @@ select:focus-visible {
 .local-relay-pill {
   color: #8b2f45;
   background: #ffe0e8;
+}
+
+.hybrid-relay-pill {
+  color: #23594c;
+  background: #dff5ec;
 }
 
 .account-name {

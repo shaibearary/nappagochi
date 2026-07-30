@@ -68,7 +68,6 @@ test('retries once with explicit relays only when the relay list is unavailable'
       options: {
         relays: ['wss://fallback.example'],
         toOutbox: false,
-        toInboxes: ['f'.repeat(64)],
       },
     },
   ]);

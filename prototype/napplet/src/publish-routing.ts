@@ -27,8 +27,9 @@ export async function publishOutboxFirst(
     return primaryResult;
   }
 
+  const { toInboxes: _unresolvedInboxes, ...fallbackOptions } = options;
   return publish(template, {
-    ...options,
+    ...fallbackOptions,
     relays: fallbackRelays,
     toOutbox: false,
   });

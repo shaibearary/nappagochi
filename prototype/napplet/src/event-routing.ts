@@ -6,6 +6,7 @@ import type {
   OutboxPublishOptions,
   OutboxPublishResult,
   OutboxQueryOptions,
+  OutboxRelayPlan,
   OutboxResult,
   RelayEventResult,
 } from '@napplet/sdk';
@@ -15,6 +16,7 @@ export const DEFAULT_LOCAL_RELAY_URL = 'ws://127.0.0.1:7777';
 
 export type EventRouting = {
   localRelayOnly: boolean;
+  localRelayMirror: boolean;
   localRelayUrl: string;
 };
 
@@ -48,15 +50,59 @@ function loopbackRelayUrl(value: unknown): string {
   }
 }
 
+function uniqueRelayUrls(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
+}
+
+export function hybridReadRelayHints(
+  routing: EventRouting,
+  plan: OutboxRelayPlan | null,
+  publicFallbacks: string[],
+): string[] {
+  if (routing.localRelayOnly) return [routing.localRelayUrl];
+  if (!routing.localRelayMirror) return [];
+  const hasNip65 =
+    plan?.source === 'nip65' &&
+    (plan.missingAuthors?.length ?? 0) === 0;
+  if (hasNip65) return [routing.localRelayUrl];
+  return uniqueRelayUrls([
+    routing.localRelayUrl,
+    ...(plan?.relays ?? []),
+    ...publicFallbacks,
+  ]);
+}
+
+function withLocalRelayHint<T extends { relays?: string[] }>(
+  routing: EventRouting,
+  options: T,
+): T {
+  if (!routing.localRelayMirror) return options;
+  return {
+    ...options,
+    relays: uniqueRelayUrls([...(options.relays ?? []), routing.localRelayUrl]),
+  };
+}
+
 export function eventRoutingFromConfig(values: Record<string, unknown>): EventRouting {
-  if (values.nostrPetLocalRelayOnly !== true) {
-    return { localRelayOnly: false, localRelayUrl: '' };
-  }
   const localRelayUrl = loopbackRelayUrl(
     values.nostrPetLocalRelayUrl ?? DEFAULT_LOCAL_RELAY_URL,
   );
+  if (!localRelayUrl) {
+    return { localRelayOnly: false, localRelayMirror: false, localRelayUrl: '' };
+  }
+  if (values.nostrPetLocalRelayOnly === true) {
+    return {
+      localRelayOnly: true,
+      localRelayMirror: false,
+      localRelayUrl,
+    };
+  }
+  if (values.nostrPetLocalRelayMirror === false) {
+    return { localRelayOnly: false, localRelayMirror: false, localRelayUrl: '' };
+  }
   return {
-    localRelayOnly: Boolean(localRelayUrl),
+    localRelayOnly: false,
+    localRelayMirror: true,
     localRelayUrl,
   };
 }
@@ -71,7 +117,10 @@ export async function queryEventsWithRouting(
   if (routing.localRelayOnly) {
     return { events: await relayQuery(filters) };
   }
-  return outboxQuery(filters, options);
+  return outboxQuery(
+    filters,
+    withLocalRelayHint(routing, options ?? {}),
+  );
 }
 
 export async function getEventWithRouting(
@@ -81,7 +130,12 @@ export async function getEventWithRouting(
   eventId: string,
   options?: OutboxEventOptions,
 ): Promise<OutboxEventResult> {
-  if (!routing.localRelayOnly) return outboxGetEvent(eventId, options);
+  if (!routing.localRelayOnly) {
+    return outboxGetEvent(
+      eventId,
+      withLocalRelayHint(routing, options ?? {}),
+    );
+  }
   const events = await relayQuery([
     {
       ids: [eventId],
@@ -99,6 +153,7 @@ export async function publishEventWithRouting(
   template: EventTemplate,
   options: OutboxPublishOptions = {},
   fallbackRelays: string[] = [],
+  hasNip65?: boolean,
 ): Promise<OutboxPublishResult> {
   if (routing.localRelayOnly) {
     return outboxPublish(template, {
@@ -106,5 +161,30 @@ export async function publishEventWithRouting(
       toOutbox: false,
     });
   }
-  return publishOutboxFirst(outboxPublish, template, options, fallbackRelays);
+  const primaryOptions = routing.localRelayMirror
+    ? {
+        ...options,
+        relays: uniqueRelayUrls([
+          routing.localRelayUrl,
+          ...(options.relays ?? []),
+        ]),
+      }
+    : options;
+  const explicitFallbacks = routing.localRelayMirror
+    ? uniqueRelayUrls([routing.localRelayUrl, ...fallbackRelays])
+    : fallbackRelays;
+  if (routing.localRelayMirror && hasNip65 === false) {
+    const { toInboxes: _unresolvedInboxes, ...fallbackOptions } = options;
+    return outboxPublish(template, {
+      ...fallbackOptions,
+      relays: explicitFallbacks,
+      toOutbox: false,
+    });
+  }
+  return publishOutboxFirst(
+    outboxPublish,
+    template,
+    primaryOptions,
+    explicitFallbacks,
+  );
 }

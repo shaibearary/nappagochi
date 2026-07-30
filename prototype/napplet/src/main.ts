@@ -14,6 +14,7 @@ import {
   type OutboxPublishOptions,
   type OutboxPublishResult,
   type OutboxQueryOptions,
+  type OutboxRelayPlan,
   type OutboxResult,
   type OutboxSubscription,
   type ProfileData,
@@ -32,6 +33,7 @@ import {
 import {
   eventRoutingFromConfig,
   getEventWithRouting,
+  hybridReadRelayHints,
   publishEventWithRouting,
   queryEventsWithRouting,
   type EventRouting,
@@ -51,6 +53,7 @@ declare global {
       outbox?: {
         getEvent?: unknown;
         query?: unknown;
+        resolveRelays?: unknown;
         subscribe?: unknown;
         publish?: unknown;
       };
@@ -147,6 +150,7 @@ type DoctorCandidate = {
   relayHint: string;
 };
 type DoctorSource = 'follows' | 'discovery' | null;
+type RelayPlanSource = 'pending' | 'local-only' | 'nip65' | 'fallback' | 'normal';
 
 type ProfileCheck = {
   label: string;
@@ -241,6 +245,8 @@ let appearance: Appearance = { ...DEFAULT_APPEARANCE };
 let health: Health | null = null;
 let profileHealth: ProfileHealth = { ...EMPTY_PROFILE_HEALTH };
 let fallbackRelayUrls: string[] = [];
+let readRelayHints: string[] = [];
+let relayPlanSource: RelayPlanSource = 'pending';
 let incompleteSync = false;
 let loading = true;
 let actionBusy = false;
@@ -250,7 +256,7 @@ let previewState: PetState | null = null;
 let doctorCandidates: DoctorCandidate[] = [];
 let doctorSource: DoctorSource = null;
 let doctorLoading = false;
-let eventRouting: EventRouting = { localRelayOnly: false, localRelayUrl: '' };
+let eventRouting: EventRouting = eventRoutingFromConfig({});
 let liveSubscription: OutboxSubscription | Subscription | null = null;
 let identitySubscription: Subscription | null = null;
 let themeSubscription: Subscription | null = null;
@@ -855,6 +861,9 @@ function beginLiveSubscription(): void {
   }
   const subscription = outbox.subscribe(filters, {
     authors: [pubkey],
+    ...(readRelayHints.length
+      ? { relays: readRelayHints }
+      : {}),
     limit: 200,
     timeoutMs: 5_000,
   });
@@ -888,12 +897,22 @@ async function queryPetEvents(
   filters: NostrFilter[],
   options?: OutboxQueryOptions,
 ): Promise<OutboxResult> {
+  const routedOptions =
+    readRelayHints.length && !eventRouting.localRelayOnly
+      ? {
+          ...options,
+          relays: uniqueRelayUrls([
+            ...(options?.relays ?? []),
+            ...readRelayHints,
+          ]),
+        }
+      : options;
   return queryEventsWithRouting(
     eventRouting,
     (currentFilters) => relay.query(currentFilters),
     (currentFilters, currentOptions) => outbox.query(currentFilters, currentOptions),
     filters,
-    options,
+    routedOptions,
   );
 }
 
@@ -901,29 +920,68 @@ async function getPetEvent(
   eventId: string,
   options?: OutboxEventOptions,
 ) {
+  const routedOptions =
+    readRelayHints.length && !eventRouting.localRelayOnly
+      ? {
+          ...options,
+          relays: uniqueRelayUrls([
+            ...(options?.relays ?? []),
+            ...readRelayHints,
+          ]),
+        }
+      : options;
   return getEventWithRouting(
     eventRouting,
     (filters) => relay.query(filters),
     (currentEventId, currentOptions) => outbox.getEvent(currentEventId, currentOptions),
     eventId,
-    options,
+    routedOptions,
   );
 }
 
-async function setupEventRouting(): Promise<void> {
-  eventRouting = { localRelayOnly: false, localRelayUrl: '' };
-  const runtime = window.napplet;
-  if (
-    typeof runtime?.config?.get !== 'function' ||
-    typeof runtime.relay?.query !== 'function' ||
-    typeof runtime.relay.subscribe !== 'function'
-  ) {
+async function prepareReadRelayPlan(owner: string): Promise<void> {
+  if (eventRouting.localRelayOnly) {
+    readRelayHints = [eventRouting.localRelayUrl];
+    relayPlanSource = 'local-only';
     return;
   }
+  if (!eventRouting.localRelayMirror) {
+    readRelayHints = [];
+    relayPlanSource = 'normal';
+    return;
+  }
+
+  let plan: OutboxRelayPlan | null = null;
+  if (typeof window.napplet?.outbox?.resolveRelays === 'function') {
+    try {
+      plan = await outbox.resolveRelays({
+        authors: [owner],
+        direction: 'read',
+      });
+    } catch {
+      plan = null;
+    }
+  }
+  readRelayHints = hybridReadRelayHints(
+    eventRouting,
+    plan,
+    DEFAULT_PUBLISH_RELAYS,
+  );
+  relayPlanSource =
+    plan?.source === 'nip65' &&
+    (plan.missingAuthors?.length ?? 0) === 0
+      ? 'nip65'
+      : 'fallback';
+}
+
+async function setupEventRouting(): Promise<void> {
+  eventRouting = eventRoutingFromConfig({});
+  const runtime = window.napplet;
+  if (typeof runtime?.config?.get !== 'function') return;
   try {
     eventRouting = eventRoutingFromConfig(await config.get());
   } catch {
-    eventRouting = { localRelayOnly: false, localRelayUrl: '' };
+    eventRouting = eventRoutingFromConfig({});
   }
 }
 
@@ -944,11 +1002,14 @@ async function load(): Promise<void> {
       health = null;
       profileHealth = { ...EMPTY_PROFILE_HEALTH };
       fallbackRelayUrls = [];
+      readRelayHints = [];
+      relayPlanSource = 'pending';
       loading = false;
       render();
       return;
     }
 
+    await prepareReadRelayPlan(pubkey);
     const profilePromise = eventRouting.localRelayOnly
       ? Promise.resolve(null)
       : identity.getProfile();
@@ -1001,7 +1062,12 @@ async function load(): Promise<void> {
         .filter(([, permissions]) => permissions.write)
         .map(([url]) => url);
       fallbackRelayUrls = uniqueRelayUrls(
-        writableIdentityRelays.length ? writableIdentityRelays : DEFAULT_PUBLISH_RELAYS,
+        [
+          ...(eventRouting.localRelayMirror ? [eventRouting.localRelayUrl] : []),
+          ...(writableIdentityRelays.length
+            ? writableIdentityRelays
+            : DEFAULT_PUBLISH_RELAYS),
+        ],
       );
     }
     profileHealth = await calculateProfileHealth(
@@ -1141,6 +1207,17 @@ function petMarkup(
 
 function shellHeader(): string {
   const accountNpub = publicNpub(pubkey);
+  const hybridTitle =
+    relayPlanSource === 'nip65'
+      ? 'Hybrid mode: NIP-65 author relays plus the local persistence mirror'
+      : relayPlanSource === 'fallback'
+        ? 'Hybrid mode: no NIP-65 relay list was resolved, so reads and publishes use local plus public fallback relays'
+        : 'Hybrid mode: resolving NIP-65, with local plus public fallback coverage';
+  const relayModePill = eventRouting.localRelayOnly
+    ? '<span class="local-relay-pill" title="Debug mode: reads and publishes use only the configured loopback relay">local only</span>'
+    : eventRouting.localRelayMirror
+      ? `<span class="hybrid-relay-pill" title="${escapeHtml(hybridTitle)}">hybrid</span>`
+      : '';
   return `
     <header class="topbar">
       <div class="brand">
@@ -1149,7 +1226,7 @@ function shellHeader(): string {
         <span class="prototype-pill">prototype</span>
       </div>
       <div class="account">
-        ${eventRouting.localRelayOnly ? '<span class="local-relay-pill" title="Debug mode: reads and publishes use only the configured loopback relay">local only</span>' : ''}
+        ${relayModePill}
         ${incompleteSync ? '<span class="sync-pill" title="Some relay results were incomplete">partial sync</span>' : ''}
         ${
           pubkey
@@ -1166,14 +1243,22 @@ function shellHeader(): string {
 }
 
 function loadingMarkup(): string {
+  const loadingLabel = eventRouting.localRelayOnly
+    ? 'Finding your pet on the local relay…'
+    : eventRouting.localRelayMirror
+      ? 'Finding your pet through NIP-65 and the local mirror…'
+      : 'Finding your pet across Nostr…';
+  const loadingDetail = eventRouting.localRelayOnly
+    ? 'Public relay discovery is disabled for this debug session.'
+    : eventRouting.localRelayMirror
+      ? 'If NIP-65 is unavailable, the shell also checks the local and public fallback relays.'
+      : 'Birth, activity, and appearance events are being reconciled.';
   return `
     ${shellHeader()}
     <section class="loading-card">
       <div class="loading-orbit" aria-hidden="true"><span></span></div>
-      <p>${eventRouting.localRelayOnly ? 'Finding your pet on the local relay…' : 'Finding your pet across Nostr…'}</p>
-      <small>${eventRouting.localRelayOnly
-        ? 'Public relay discovery is disabled for this debug session.'
-        : 'Birth, activity, and appearance events are being reconciled.'}</small>
+      <p>${loadingLabel}</p>
+      <small>${loadingDetail}</small>
     </section>
   `;
 }
@@ -1200,6 +1285,11 @@ function signedOutMarkup(): string {
             <strong>Local debug mode</strong>
             <span>Use <strong>Test nsec</strong> in Paja’s Signer panel. The secret stays in the local shell and never enters this pet.</span>
           </div>`
+        : eventRouting.localRelayMirror
+          ? `<div class="debug-login-note">
+              <strong>Hybrid relay mode</strong>
+              <span>NIP-65 remains primary. The loopback relay keeps a local mirror, with public relays as the missing-list fallback.</span>
+            </div>`
         : ''}
     </section>
   `;
@@ -1221,7 +1311,9 @@ function adoptionMarkup(previous?: Birth): string {
             ? 'A new chapter'
             : eventRouting.localRelayOnly
               ? 'No pet found on the local relay'
-              : 'No pet found for this npub'
+              : eventRouting.localRelayMirror
+                ? 'No pet found through NIP-65, local, or public relays'
+                : 'No pet found for this npub'
         }</p>
         <h1>${isSuccessor ? 'Adopt another pet' : 'Meet your Nostr companion'}</h1>
         <p>${isSuccessor
@@ -1704,6 +1796,11 @@ async function publishEvent(
     template,
     options,
     explicitRelays,
+    relayPlanSource === 'nip65'
+      ? true
+      : relayPlanSource === 'fallback'
+        ? false
+        : undefined,
   );
 }
 
@@ -1782,9 +1879,17 @@ async function handleNote(form: HTMLFormElement): Promise<void> {
     modal = null;
     await refreshDerivedState();
     const relayCount = acceptedRelayCount(result);
+    const localAccepted = Boolean(
+      eventRouting.localRelayUrl &&
+        result.relays?.[eventRouting.localRelayUrl],
+    );
     const acceptance =
-      eventRouting.localRelayOnly && result.relays?.[eventRouting.localRelayUrl]
+      eventRouting.localRelayOnly && localAccepted
         ? 'the local relay'
+        : eventRouting.localRelayMirror && localAccepted
+          ? `${relayCount} relay${relayCount === 1 ? '' : 's'}, including the local mirror`
+          : eventRouting.localRelayMirror && relayCount
+            ? `${relayCount} relay${relayCount === 1 ? '' : 's'}; the local mirror did not accept it`
         : relayCount
           ? `${relayCount} relay${relayCount === 1 ? '' : 's'}`
           : 'the shell’s relay plan';
