@@ -3,13 +3,17 @@
 Product plan and working napplet prototype for a pet whose life reflects its
 owner's public Nostr activity.
 
-Status: **napplet prototype complete; native desktop shell not started**.
+Status: **napplet published; native desktop shell not started**.
 
 ![Nostr Pet napplet prototype](docs/images/napplet-prototype-desktop.png)
 
 ## Try the prototype
 
 The implementation is in [`prototype/napplet`](prototype/napplet/README.md).
+
+[Open the public Nostr Pet napplet in Kehto Paja](https://kehto.github.io/web/paja/?naddr=naddr1qvzqqqyf8ypzqte9nen2lgah6szky3hr0ympcj5v3znps9umamlzsm53fxn9ynyxqyxhwumn8ghj7mn0wvhxcmmvqy28wumn8ghj7un9d3shjtnyv9kh2uewd9hsz9nhwden5te0wfjkccte9ec8y6tdv9kzumn9wsqqjmn0wd68yttsv46qhg7xxf).
+The release address and update procedure are documented in
+[Public napplet deployment](docs/18-public-napplet-deployment.md).
 
 ```bash
 cd prototype/napplet
@@ -98,6 +102,7 @@ limitations are in [docs/02-nostr-protocol-design.md](docs/02-nostr-protocol-des
 15. [NIP-07 publish and pulse diagnostics](docs/15-nip07-publish-pulse-debug.md)
 16. [Hybrid relay policy](docs/16-hybrid-relay-policy.md)
 17. [Local demo accounts and npub viewer](docs/17-local-demo-view-mode.md)
+18. [Public napplet deployment](docs/18-public-napplet-deployment.md)
 
 ## Decisions already made for the plan
 

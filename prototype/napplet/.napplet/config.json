@@ -1,8 +1,15 @@
 {
   "version": 1,
   "sourceDir": ".",
-  "relays": [],
-  "blossomServers": [],
+  "relays": [
+    "wss://nos.lol",
+    "wss://relay.damus.io",
+    "wss://relay.primal.net"
+  ],
+  "blossomServers": [
+    "https://blossom.primal.net",
+    "https://nostr.download"
+  ],
   "defaultTarget": "named",
   "named": [
     "nostr-pet"
@@ -14,7 +21,8 @@
     ]
   },
   "signing": {
-    "mode": "interactive"
+    "mode": "interactive",
+    "keyReference": "nostr-pet-deploy"
   },
   "conformance": {
     "command": "napplet-conformance"
@@ -24,8 +32,8 @@
   },
   "metadata": {
     "name": "nostr-pet",
-    "title": "Nostr Pet Prototype",
-    "description": "A portable Nostr activity pet prototype.",
+    "title": "Nostr Pet",
+    "description": "A gamified Nostr activity pet whose health follows its owner's signed social activity.",
     "archetypes": []
   }
 }
