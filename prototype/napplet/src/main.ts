@@ -15,6 +15,7 @@ import {
   type Subscription,
   type Theme,
 } from '@napplet/sdk';
+import { npubEncode } from 'nostr-tools/nip19';
 import { publishOutboxFirst } from './publish-routing';
 import './styles.css';
 
@@ -242,6 +243,22 @@ function escapeHtml(value: unknown): string {
 
 function shortKey(value: string): string {
   return value ? `${value.slice(0, 7)}…${value.slice(-5)}` : 'signed out';
+}
+
+function publicNpub(value: string): string {
+  if (!/^[0-9a-f]{64}$/i.test(value)) return value;
+  try {
+    return npubEncode(value.toLowerCase());
+  } catch {
+    return value;
+  }
+}
+
+function shortNpub(value: string): string {
+  const encoded = publicNpub(value);
+  return encoded.startsWith('npub1')
+    ? `${encoded.slice(0, 12)}…${encoded.slice(-8)}`
+    : shortKey(value);
 }
 
 function tagValue(event: NostrEvent, key: string): string | undefined {
@@ -950,7 +967,7 @@ async function load(): Promise<void> {
 }
 
 function profileLabel(profile: ProfileData | null): string {
-  return profile?.displayName?.trim() || profile?.name?.trim() || shortKey(pubkey);
+  return profile?.displayName?.trim() || profile?.name?.trim() || 'Nostr account';
 }
 
 function uniqueRelayUrls(values: string[]): string[] {
@@ -1056,6 +1073,7 @@ function petMarkup(
 }
 
 function shellHeader(): string {
+  const accountNpub = publicNpub(pubkey);
   return `
     <header class="topbar">
       <div class="brand">
@@ -1065,7 +1083,14 @@ function shellHeader(): string {
       </div>
       <div class="account">
         ${incompleteSync ? '<span class="sync-pill" title="Some relay results were incomplete">partial sync</span>' : ''}
-        <span class="account-name">${escapeHtml(accountName || shortKey(pubkey))}</span>
+        ${
+          pubkey
+            ? `<span class="account-identity">
+                <span class="account-name">${escapeHtml(accountName || 'Nostr account')}</span>
+                <span class="account-npub" title="${escapeHtml(accountNpub)}">${escapeHtml(accountNpub)}</span>
+              </span>`
+            : '<span class="account-name">signed out</span>'
+        }
         <span class="account-dot" aria-hidden="true"></span>
       </div>
     </header>
@@ -1281,7 +1306,7 @@ function doctorModalMarkup(): string {
         <label class="note-choice">
           <input type="radio" name="candidate" value="${index}" ${index === 0 ? 'checked' : ''} />
           <span>
-            <strong>${shortKey(candidate.event.pubkey)}</strong>
+            <strong title="${escapeHtml(publicNpub(candidate.event.pubkey))}">${escapeHtml(shortNpub(candidate.event.pubkey))}</strong>
             <small>${formatRelative(candidate.event.created_at)}</small>
             <em>${escapeHtml(candidate.event.content.slice(0, 180) || '(media or tag-only note)')}</em>
           </span>

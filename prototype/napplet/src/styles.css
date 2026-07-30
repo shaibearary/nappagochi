@@ -130,6 +130,25 @@ select:focus-visible {
   white-space: nowrap;
 }
 
+.account-identity {
+  display: grid;
+  min-width: 0;
+  line-height: 1.1;
+  text-align: right;
+}
+
+.account-npub {
+  max-width: min(63ch, 38vw);
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .account-dot {
   width: 8px;
   height: 8px;
@@ -1342,6 +1361,10 @@ form > small {
   .prototype-pill,
   .account-name {
     display: none;
+  }
+
+  .account-npub {
+    max-width: 17ch;
   }
 
   .pet-layout,
