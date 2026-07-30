@@ -77,6 +77,7 @@ limitations are in [docs/02-nostr-protocol-design.md](docs/02-nostr-protocol-des
 9. [Prototype build report](docs/09-prototype-build-report.md)
 10. [Profile-health integration](docs/10-profile-health-integration.md)
 11. [Local lifecycle test lab](docs/11-local-lifecycle-test-lab.md)
+12. [Demo runbook](docs/12-demo-runbook.md)
 
 ## Decisions already made for the plan
 
