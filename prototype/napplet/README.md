@@ -64,6 +64,10 @@ funds. Private-key handling remains completely outside the production napplet.
 See [`docs/11-local-lifecycle-test-lab.md`](../../docs/11-local-lifecycle-test-lab.md)
 for all scenarios and commands.
 
+For a persistent, loopback-only live relay test, see
+[`docs/13-local-relay-test.md`](../../docs/13-local-relay-test.md). The napplet
+still publishes through NAP-OUTBOX; Paja owns the WebSocket connection.
+
 ## Preview in a real shell
 
 Start the napplet and Paja in separate terminals:
@@ -88,9 +92,10 @@ relays.
 - Optional domains: `resource`, `storage`, `theme`.
 - No direct network, signer, relay pool, key, or browser persistence access.
 - Normal social reads and publishes are OUTBOX-first.
-- When NIP-65 is absent, publishes pass writable Identity candidates plus four
-  disclosed prototype defaults back through Outbox; the napplet never opens
-  relay connections.
+- When NIP-65 is absent, publishes pass writable Identity candidates back
+  through Outbox. The four disclosed prototype defaults are used only when the
+  shell provides no writable candidate; the napplet never opens relay
+  connections.
 - The source of truth is signed Nostr history, not local UI state.
 - Local fixture generation is a separate Node development script and is absent
   from the single-file production artifact.

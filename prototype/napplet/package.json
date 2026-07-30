@@ -14,7 +14,10 @@
     "test:conformance:ui": "napplet-conformance --ui . --exec \"vite build --watch\"",
     "test:fixtures": "node --test scripts/create-pet-fixtures.test.mjs",
     "test:fixtures:matrix": "node scripts/create-pet-fixtures.mjs --matrix",
-    "test:fixture:nsec": "node scripts/create-pet-fixtures.mjs --paste-nsec"
+    "test:fixture:nsec": "node scripts/create-pet-fixtures.mjs --paste-nsec",
+    "test:local-relay": "node --test scripts/local-test-relay.test.mjs",
+    "relay:local": "deno run --allow-net=127.0.0.1:7777 --allow-read=.pet-test/local-relay --allow-write=.pet-test/local-relay scripts/local-test-relay.ts --port 7777 --data .pet-test/local-relay/events.json",
+    "relay:query": "node scripts/query-local-relay.mjs --relay ws://127.0.0.1:7777"
   },
   "dependencies": {
     "@napplet/sdk": "^0.25.0"

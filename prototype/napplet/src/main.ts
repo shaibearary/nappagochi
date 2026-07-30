@@ -915,13 +915,11 @@ async function load(): Promise<void> {
     const currentFollows = eventFollows ?? follows;
     const currentRelays = relaysFromEvent(relayListEvent) ?? identityRelays;
 
+    const writableIdentityRelays = Object.entries(identityRelays)
+      .filter(([, permissions]) => permissions.write)
+      .map(([url]) => url);
     fallbackRelayUrls = uniqueRelayUrls(
-      [
-        ...Object.entries(identityRelays)
-          .filter(([, permissions]) => permissions.write)
-          .map(([url]) => url),
-        ...DEFAULT_PUBLISH_RELAYS,
-      ],
+      writableIdentityRelays.length ? writableIdentityRelays : DEFAULT_PUBLISH_RELAYS,
     );
     relayFallbackActive = !relayListEvent;
     profileHealth = await calculateProfileHealth(
