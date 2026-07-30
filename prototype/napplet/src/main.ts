@@ -1,14 +1,20 @@
 import {
+  config,
   identity,
   outbox,
+  relay,
   resource,
   storage,
   themeGet,
   themeOnChanged,
   type EventTemplate,
   type NostrEvent,
+  type NostrFilter,
+  type OutboxEventOptions,
   type OutboxPublishOptions,
   type OutboxPublishResult,
+  type OutboxQueryOptions,
+  type OutboxResult,
   type OutboxSubscription,
   type ProfileData,
   type RelayEventResult,
@@ -16,7 +22,13 @@ import {
   type Theme,
 } from '@napplet/sdk';
 import { npubEncode } from 'nostr-tools/nip19';
-import { publishOutboxFirst } from './publish-routing';
+import {
+  eventRoutingFromConfig,
+  getEventWithRouting,
+  publishEventWithRouting,
+  queryEventsWithRouting,
+  type EventRouting,
+} from './event-routing';
 import './styles.css';
 
 declare global {
@@ -34,6 +46,13 @@ declare global {
         query?: unknown;
         subscribe?: unknown;
         publish?: unknown;
+      };
+      relay?: {
+        query?: unknown;
+        subscribe?: unknown;
+      };
+      config?: {
+        get?: unknown;
       };
       storage?: {
         getItem?: unknown;
@@ -206,6 +225,7 @@ if (!app) throw new Error('Missing app root');
 
 let pubkey = '';
 let accountName = '';
+let accountFollows: string[] = [];
 let births: Birth[] = [];
 let notes: NostrEvent[] = [];
 let verifiedMedicineIds = new Set<string>();
@@ -223,7 +243,8 @@ let previewState: PetState | null = null;
 let doctorCandidates: DoctorCandidate[] = [];
 let doctorSource: DoctorSource = null;
 let doctorLoading = false;
-let liveSubscription: OutboxSubscription | null = null;
+let eventRouting: EventRouting = { localRelayOnly: false, localRelayUrl: '' };
+let liveSubscription: OutboxSubscription | Subscription | null = null;
 let identitySubscription: Subscription | null = null;
 let themeSubscription: Subscription | null = null;
 let healthTimer: number | null = null;
@@ -761,9 +782,10 @@ async function verifyMedicineEvents(events: NostrEvent[]): Promise<Set<string>> 
       const target = directReplyTarget(event);
       if (!target) return;
       try {
-        const result = await outbox.getEvent(target.id, {
+        const result = await getPetEvent(target.id, {
           author: target.pubkey,
-          relays: target.relay ? [target.relay] : undefined,
+          relays:
+            !eventRouting.localRelayOnly && target.relay ? [target.relay] : undefined,
           timeoutMs: 4_000,
         });
         const parent = result.result?.event;
@@ -784,7 +806,7 @@ function profileD(eventId: string): string {
 
 async function loadAppearance(birth: Birth): Promise<Appearance> {
   try {
-    const result = await outbox.query(
+    const result = await queryPetEvents(
       [{ authors: [pubkey], kinds: [30_078], '#d': [profileD(birth.event.id)], limit: 20 }],
       { authors: [pubkey], limit: 20, timeoutMs: 5_000 },
     );
@@ -842,15 +864,25 @@ function closeLiveSubscription(): void {
 function beginLiveSubscription(): void {
   closeLiveSubscription();
   if (!pubkey || !activeBirth) return;
-  liveSubscription = outbox.subscribe(
-    [{ authors: [pubkey], kinds: [1], since: activeBirth.event.created_at }],
-    { authors: [pubkey], limit: 200, timeoutMs: 5_000 },
-  );
-  liveSubscription.on('event', (result) => {
+  const filters = [{ authors: [pubkey], kinds: [1], since: activeBirth.event.created_at }];
+  const onEvent = (result: RelayEventResult) => {
     if (notes.some((event) => event.id === result.event.id)) return;
     notes.push(result.event);
     void refreshDerivedState();
+  };
+  if (eventRouting.localRelayOnly) {
+    liveSubscription = relay.subscribe(filters, onEvent, () => undefined, {
+      relay: eventRouting.localRelayUrl,
+    });
+    return;
+  }
+  const subscription = outbox.subscribe(filters, {
+    authors: [pubkey],
+    limit: 200,
+    timeoutMs: 5_000,
   });
+  subscription.on('event', onEvent);
+  liveSubscription = subscription;
 }
 
 async function refreshDerivedState(): Promise<void> {
@@ -863,10 +895,58 @@ async function refreshDerivedState(): Promise<void> {
 }
 
 async function getIdentityRelays(): Promise<RelayPermissions> {
+  if (eventRouting.localRelayOnly) {
+    return {
+      [eventRouting.localRelayUrl]: { read: true, write: true },
+    };
+  }
   try {
     return await identity.getRelays();
   } catch {
     return {};
+  }
+}
+
+async function queryPetEvents(
+  filters: NostrFilter[],
+  options?: OutboxQueryOptions,
+): Promise<OutboxResult> {
+  return queryEventsWithRouting(
+    eventRouting,
+    (currentFilters) => relay.query(currentFilters),
+    (currentFilters, currentOptions) => outbox.query(currentFilters, currentOptions),
+    filters,
+    options,
+  );
+}
+
+async function getPetEvent(
+  eventId: string,
+  options?: OutboxEventOptions,
+) {
+  return getEventWithRouting(
+    eventRouting,
+    (filters) => relay.query(filters),
+    (currentEventId, currentOptions) => outbox.getEvent(currentEventId, currentOptions),
+    eventId,
+    options,
+  );
+}
+
+async function setupEventRouting(): Promise<void> {
+  eventRouting = { localRelayOnly: false, localRelayUrl: '' };
+  const runtime = window.napplet;
+  if (
+    typeof runtime?.config?.get !== 'function' ||
+    typeof runtime.relay?.query !== 'function' ||
+    typeof runtime.relay.subscribe !== 'function'
+  ) {
+    return;
+  }
+  try {
+    eventRouting = eventRoutingFromConfig(await config.get());
+  } catch {
+    eventRouting = { localRelayOnly: false, localRelayUrl: '' };
   }
 }
 
@@ -880,6 +960,7 @@ async function load(): Promise<void> {
     pubkey = await identity.getPublicKey();
     if (!pubkey) {
       accountName = '';
+      accountFollows = [];
       births = [];
       notes = [];
       activeBirth = null;
@@ -891,10 +972,14 @@ async function load(): Promise<void> {
       return;
     }
 
-    const profilePromise = identity.getProfile();
-    const followsPromise = identity.getFollows().catch(() => [] as string[]);
+    const profilePromise = eventRouting.localRelayOnly
+      ? Promise.resolve(null)
+      : identity.getProfile();
+    const followsPromise = eventRouting.localRelayOnly
+      ? Promise.resolve([] as string[])
+      : identity.getFollows().catch(() => [] as string[]);
     const relaysPromise = getIdentityRelays();
-    const profileHealthEventsPromise = outbox.query(
+    const profileHealthEventsPromise = queryPetEvents(
       [
         {
           authors: [pubkey],
@@ -904,11 +989,11 @@ async function load(): Promise<void> {
       ],
       { authors: [pubkey], limit: 20, timeoutMs: 8_000 },
     );
-    const birthPromise = outbox.query(
+    const birthPromise = queryPetEvents(
       [{ authors: [pubkey], kinds: [78], '#d': [BIRTH_D], limit: 100 }],
       { authors: [pubkey], limit: 100, timeoutMs: 6_000 },
     );
-    const notePromise = outbox.query([{ authors: [pubkey], kinds: [1], limit: 500 }], {
+    const notePromise = queryPetEvents([{ authors: [pubkey], kinds: [1], limit: 500 }], {
       authors: [pubkey],
       limit: 500,
       timeoutMs: 8_000,
@@ -930,13 +1015,18 @@ async function load(): Promise<void> {
     const currentProfile = eventProfile ?? profile;
     const currentFollows = eventFollows ?? follows;
     const currentRelays = relaysFromEvent(relayListEvent) ?? identityRelays;
+    accountFollows = currentFollows;
 
-    const writableIdentityRelays = Object.entries(identityRelays)
-      .filter(([, permissions]) => permissions.write)
-      .map(([url]) => url);
-    fallbackRelayUrls = uniqueRelayUrls(
-      writableIdentityRelays.length ? writableIdentityRelays : DEFAULT_PUBLISH_RELAYS,
-    );
+    if (eventRouting.localRelayOnly) {
+      fallbackRelayUrls = [eventRouting.localRelayUrl];
+    } else {
+      const writableIdentityRelays = Object.entries(identityRelays)
+        .filter(([, permissions]) => permissions.write)
+        .map(([url]) => url);
+      fallbackRelayUrls = uniqueRelayUrls(
+        writableIdentityRelays.length ? writableIdentityRelays : DEFAULT_PUBLISH_RELAYS,
+      );
+    }
     profileHealth = await calculateProfileHealth(
       pubkey,
       currentProfile,
@@ -1082,6 +1172,7 @@ function shellHeader(): string {
         <span class="prototype-pill">prototype</span>
       </div>
       <div class="account">
+        ${eventRouting.localRelayOnly ? '<span class="local-relay-pill" title="Debug mode: reads and publishes use only the configured loopback relay">local only</span>' : ''}
         ${incompleteSync ? '<span class="sync-pill" title="Some relay results were incomplete">partial sync</span>' : ''}
         ${
           pubkey
@@ -1102,8 +1193,10 @@ function loadingMarkup(): string {
     ${shellHeader()}
     <section class="loading-card">
       <div class="loading-orbit" aria-hidden="true"><span></span></div>
-      <p>Finding your pet across Nostr…</p>
-      <small>Birth, activity, and appearance events are being reconciled.</small>
+      <p>${eventRouting.localRelayOnly ? 'Finding your pet on the local relay…' : 'Finding your pet across Nostr…'}</p>
+      <small>${eventRouting.localRelayOnly
+        ? 'Public relay discovery is disabled for this debug session.'
+        : 'Birth, activity, and appearance events are being reconciled.'}</small>
     </section>
   `;
 }
@@ -1124,6 +1217,12 @@ function signedOutMarkup(): string {
         <span><strong>Signer not found?</strong> Enable a NIP-07 extension in this browser, then reload Paja.</span>
         <span><strong>Never paste an nsec into Nostr Pet.</strong> Keep private keys inside your signer.</span>
       </p>
+      ${eventRouting.localRelayOnly
+        ? `<div class="debug-login-note">
+            <strong>Local debug mode</strong>
+            <span>Use <strong>Test nsec</strong> in Paja’s Signer panel. The secret stays in the local shell and never enters this pet.</span>
+          </div>`
+        : ''}
     </section>
   `;
 }
@@ -1139,7 +1238,13 @@ function adoptionMarkup(previous?: Birth): string {
         <span class="spark spark--two">·</span>
       </div>
       <form id="adopt-form" class="adoption-card" novalidate>
-        <p class="eyebrow">${isSuccessor ? 'A new chapter' : 'No pet found for this npub'}</p>
+        <p class="eyebrow">${
+          isSuccessor
+            ? 'A new chapter'
+            : eventRouting.localRelayOnly
+              ? 'No pet found on the local relay'
+              : 'No pet found for this npub'
+        }</p>
         <h1>${isSuccessor ? 'Adopt another pet' : 'Meet your Nostr companion'}</h1>
         <p>${isSuccessor
           ? `${escapeHtml(previous?.data.name)} stays in your history. This creates a separate life.`
@@ -1613,7 +1718,8 @@ async function publishEvent(
     ...(options.relays ?? []),
     ...extraFallbackRelays,
   ]);
-  return publishOutboxFirst(
+  return publishEventWithRouting(
+    eventRouting,
     (currentTemplate, currentOptions) =>
       outbox.publish(currentTemplate, currentOptions),
     template,
@@ -1737,12 +1843,14 @@ function selectDoctorCandidates(
 async function loadDoctorCandidates(): Promise<void> {
   doctorSource = null;
   try {
-    const follows = (await identity.getFollows().catch(() => []))
+    const follows = (eventRouting.localRelayOnly
+      ? accountFollows
+      : await identity.getFollows().catch(() => []))
       .filter((key) => key !== pubkey)
       .slice(0, 30);
     if (follows.length) {
       try {
-        const result = await outbox.query(
+        const result = await queryPetEvents(
           [
             {
               authors: follows,
@@ -1769,7 +1877,7 @@ async function loadDoctorCandidates(): Promise<void> {
       }
     }
 
-    const result = await outbox.query(
+    const result = await queryPetEvents(
       [
         {
           kinds: [1],
@@ -1915,6 +2023,7 @@ async function start(): Promise<void> {
   render();
   if (!hasRequiredRuntime()) return;
   await setupTheme();
+  await setupEventRouting();
   identitySubscription = identity.onChanged(() => {
     void load();
   });

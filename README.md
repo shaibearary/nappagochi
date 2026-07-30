@@ -43,6 +43,11 @@ The local fixture lab can also accept a disposable test `nsec` through a hidden
 prompt. Private keys never enter the napplet or generated files. See
 [Local lifecycle test lab](docs/11-local-lifecycle-test-lab.md).
 
+For the local-only interactive test page, start the loopback relay and Vite,
+then run `pnpm paja:debug`. Open `http://127.0.0.1:5197/` and use the
+**Test nsec** field in Paja's Signer panel with a disposable key. See
+[Local-only debug mode](docs/14-local-only-debug-mode.md).
+
 ## Product premise
 
 - A Nostr account can create a pet by signing a birth event.
@@ -78,6 +83,8 @@ limitations are in [docs/02-nostr-protocol-design.md](docs/02-nostr-protocol-des
 10. [Profile-health integration](docs/10-profile-health-integration.md)
 11. [Local lifecycle test lab](docs/11-local-lifecycle-test-lab.md)
 12. [Demo runbook](docs/12-demo-runbook.md)
+13. [Local relay persistence test](docs/13-local-relay-test.md)
+14. [Local-only debug mode](docs/14-local-only-debug-mode.md)
 
 ## Decisions already made for the plan
 

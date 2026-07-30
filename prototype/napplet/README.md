@@ -19,6 +19,8 @@ operating-system desktop overlay.
   Fragile living-condition variants.
 - Reconciles live kind `1` events and shows partial-sync status.
 - Supports optional shell theme and storage domains with safe fallbacks.
+- Supports a documented, temporary local-relay-only debug mode without exposing
+  private keys to the napplet.
 - Includes a visual-state lab that never changes canonical Nostr state.
 
 ## Run checks
@@ -68,6 +70,19 @@ For a persistent, loopback-only live relay test, see
 [`docs/13-local-relay-test.md`](../../docs/13-local-relay-test.md). The napplet
 still publishes through NAP-OUTBOX; Paja owns the WebSocket connection.
 
+For deterministic recovery without public relay discovery, including copying
+an already-signed pet event into the loopback relay, see
+[`docs/14-local-only-debug-mode.md`](../../docs/14-local-only-debug-mode.md).
+With the relay and Vite server running, start that test page with:
+
+```bash
+pnpm paja:debug
+```
+
+Open `http://127.0.0.1:5197/`. Its Paja Signer panel includes a temporary
+**Test nsec** password field for disposable keys. The field belongs to the local
+shell, not the napplet, and the secret is cleared on refresh.
+
 ## Preview in a real shell
 
 Start the napplet and Paja in separate terminals:
@@ -89,7 +104,8 @@ relays.
 ## Napplet boundaries
 
 - Required domains: `identity`, `outbox`.
-- Optional domains: `resource`, `storage`, `theme`.
+- Optional domains: `resource`, `storage`, `theme`, plus temporary debug-only
+  `config` and `relay` support.
 - No direct network, signer, relay pool, key, or browser persistence access.
 - Normal social reads and publishes are OUTBOX-first.
 - When NIP-65 is absent, publishes pass writable Identity candidates back

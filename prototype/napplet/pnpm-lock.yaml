@@ -12,6 +12,9 @@ importers:
         specifier: ^0.25.0
         version: 0.25.0
     devDependencies:
+      '@kehto/paja':
+        specifier: 0.8.0
+        version: 0.8.0(@napplet/core@0.28.0)(@napplet/nap@0.28.0)(nostr-tools@2.23.5(typescript@5.9.3))
       '@napplet/conformance-cli':
         specifier: ^0.2.16
         version: 0.2.16
@@ -189,6 +192,55 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@kehto/acl@0.15.6':
+    resolution: {integrity: sha512-6cInnqVh7UdqNePrHl1QCuQyWripUt5ZN8Do5pEIj6ogknjC1IGruqEurZFjRq2uUpBQSUvmwCqAhtvKtvTo5A==}
+    peerDependencies:
+      '@napplet/core': '>=0.23.0 <=0.28.x'
+      '@napplet/nap': '>=0.23.0 <=0.28.x'
+
+  '@kehto/firewall@0.3.9':
+    resolution: {integrity: sha512-UVqWpIqJiq0nJGZC/0hXjYW3INxijpE2n8SqTTDoyAa/bRknYPEt+PNssdpasjFD+SXdCllLdYwTwa+qtajW4Q==}
+    peerDependencies:
+      '@napplet/core': '>=0.23.0 <=0.28.x'
+
+  '@kehto/nip@0.4.2':
+    resolution: {integrity: sha512-QQ8l8Nzp1hZMJCQSr0kW+89R9JgVi5BppNJXwIgQiSRWv0oEZ8OGnjuREyywOy3hp25itpU0PWPPvmrGzFh1QA==}
+    peerDependencies:
+      nostr-tools: '>=2.23.3 <=2.x'
+
+  '@kehto/paja@0.8.0':
+    resolution: {integrity: sha512-Kks2ZFAhIxY6Tw+nrOE+OGFwNylFYIMTZe5J2GzkfKzPq8/xjGnTfHqzD4sCj1yculiNVW/WNqE/oGBTSwxRVg==}
+    peerDependencies:
+      '@napplet/core': '>=0.23.0 <=0.28.x'
+      '@napplet/nap': '>=0.23.0 <=0.28.x'
+      nostr-tools: '>=2.23.3 <=2.x'
+
+  '@kehto/runtime@0.18.5':
+    resolution: {integrity: sha512-fFHMp0VQ1g5qQsjQJZwdKH/pVqqRBHPrWd2q57Me4VTia54kFct+V5HU8O9Qy/cUcv8yeNN5b7PHUW1M4iKnhA==}
+    peerDependencies:
+      '@napplet/core': '>=0.23.0 <=0.28.x'
+      '@napplet/nap': '>=0.23.0 <=0.28.x'
+
+  '@kehto/services@0.16.5':
+    resolution: {integrity: sha512-yyJyDg+b81cTqOWhim9VcUgWgNuv7kxJIfXP2BAkZRDDLKlFpW9kTCHzkY9I3uXGNi2yUWWq41QpLaW22w2MNw==}
+    peerDependencies:
+      '@napplet/core': '>=0.23.0 <=0.28.x'
+      '@napplet/nap': '>=0.23.0 <=0.28.x'
+      nostr-tools: '>=2.23.3 <=2.x'
+    peerDependenciesMeta:
+      nostr-tools:
+        optional: true
+
+  '@kehto/shell@0.17.2':
+    resolution: {integrity: sha512-C5/Etvt5say90c0EEgsdIbIToxrWEp0Fs3/PsVhbyuUuJG9/EQFLchLTpGbZ6ZEnvPHqu8r1g1OzVWQjDUm4Rw==}
+    peerDependencies:
+      '@napplet/core': '>=0.23.0 <=0.28.x'
+      '@napplet/nap': '>=0.23.0 <=0.28.x'
+      nostr-tools: '>=2.23.3 <=2.x'
+
+  '@kehto/wm@0.0.2':
+    resolution: {integrity: sha512-8cjneY8paT9jcBRE/XX1oEA0pWtojkO9BESQ7UMTL9gIc+2zClXGLmY0HwdHMHMeZ3+c1sIcxsF08IHVwI3pDQ==}
+
   '@napplet/conformance-cli@0.2.16':
     resolution: {integrity: sha512-ZwJ4TC0bROnIBpZqHcMWMb1uDpciJh3DAy/dDjtwdgdUj32dfyxzcMyaRcVOqBHqtwsJPPUA9L9zudXVjAeVrA==}
     hasBin: true
@@ -196,8 +248,19 @@ packages:
   '@napplet/conformance@0.14.0':
     resolution: {integrity: sha512-b2nBGm+LgJOXVj+fDpq6D7nZpUmfDGwAGkVPBePKK10eZvPKf7GMlaOtzO55NVNZWTqNCbi8ye+ern+miK3wvw==}
 
+  '@napplet/core@0.28.0':
+    resolution: {integrity: sha512-iJ0vX6YYFCcgEm4cyR5s9MUtY01j79fnQZ8mNB+cgjwYBOZwUdt/FNNAfAzGsepNtMBORzhXUdo0/CKebBa+hg==}
+
   '@napplet/core@0.29.0':
     resolution: {integrity: sha512-P0/Cf0gC2yWEcAWZf5jWD5wbInTL77ZGyjeQoA+uUQwz5YpvRREdM/V3zrFM6NlVmK+c4x39xP+DZygk2mCpoA==}
+
+  '@napplet/nap@0.28.0':
+    resolution: {integrity: sha512-1L3oDk0BDuag3RdN7E0u3BQKfl0KmX33omSE3VZsGJD2/JJr9lzx1MsZLdjFB9coxOZyX9M3QaHumTHoXdj6Dg==}
+    peerDependencies:
+      json-schema-to-ts: ^3.1.1
+    peerDependenciesMeta:
+      json-schema-to-ts:
+        optional: true
 
   '@napplet/nap@0.29.0':
     resolution: {integrity: sha512-4Z2M/eOZo8EI/FrUnUSUfSa7cBaKTcles9qvFfecKQnex3Ql/Vuhtw4VfMNpfkGbevDObSFoKcTu9jNxpRlH8w==}
@@ -610,6 +673,60 @@ snapshots:
   '@esbuild/win32-x64@0.25.12':
     optional: true
 
+  '@kehto/acl@0.15.6(@napplet/core@0.28.0)(@napplet/nap@0.28.0)':
+    dependencies:
+      '@napplet/core': 0.28.0
+      '@napplet/nap': 0.28.0
+
+  '@kehto/firewall@0.3.9(@napplet/core@0.28.0)':
+    dependencies:
+      '@napplet/core': 0.28.0
+
+  '@kehto/nip@0.4.2(nostr-tools@2.23.5(typescript@5.9.3))':
+    dependencies:
+      '@noble/hashes': 2.0.1
+      nostr-tools: 2.23.5(typescript@5.9.3)
+
+  '@kehto/paja@0.8.0(@napplet/core@0.28.0)(@napplet/nap@0.28.0)(nostr-tools@2.23.5(typescript@5.9.3))':
+    dependencies:
+      '@kehto/acl': 0.15.6(@napplet/core@0.28.0)(@napplet/nap@0.28.0)
+      '@kehto/firewall': 0.3.9(@napplet/core@0.28.0)
+      '@kehto/nip': 0.4.2(nostr-tools@2.23.5(typescript@5.9.3))
+      '@kehto/runtime': 0.18.5(@napplet/core@0.28.0)(@napplet/nap@0.28.0)
+      '@kehto/services': 0.16.5(@napplet/core@0.28.0)(@napplet/nap@0.28.0)(nostr-tools@2.23.5(typescript@5.9.3))
+      '@kehto/shell': 0.17.2(@napplet/core@0.28.0)(@napplet/nap@0.28.0)(nostr-tools@2.23.5(typescript@5.9.3))
+      '@kehto/wm': 0.0.2
+      '@napplet/core': 0.28.0
+      '@napplet/nap': 0.28.0
+      nostr-tools: 2.23.5(typescript@5.9.3)
+
+  '@kehto/runtime@0.18.5(@napplet/core@0.28.0)(@napplet/nap@0.28.0)':
+    dependencies:
+      '@kehto/acl': 0.15.6(@napplet/core@0.28.0)(@napplet/nap@0.28.0)
+      '@kehto/firewall': 0.3.9(@napplet/core@0.28.0)
+      '@napplet/core': 0.28.0
+      '@napplet/nap': 0.28.0
+      '@noble/curves': 2.0.1
+      '@noble/hashes': 2.0.1
+
+  '@kehto/services@0.16.5(@napplet/core@0.28.0)(@napplet/nap@0.28.0)(nostr-tools@2.23.5(typescript@5.9.3))':
+    dependencies:
+      '@kehto/runtime': 0.18.5(@napplet/core@0.28.0)(@napplet/nap@0.28.0)
+      '@napplet/core': 0.28.0
+      '@napplet/nap': 0.28.0
+    optionalDependencies:
+      nostr-tools: 2.23.5(typescript@5.9.3)
+
+  '@kehto/shell@0.17.2(@napplet/core@0.28.0)(@napplet/nap@0.28.0)(nostr-tools@2.23.5(typescript@5.9.3))':
+    dependencies:
+      '@kehto/acl': 0.15.6(@napplet/core@0.28.0)(@napplet/nap@0.28.0)
+      '@kehto/runtime': 0.18.5(@napplet/core@0.28.0)(@napplet/nap@0.28.0)
+      '@napplet/core': 0.28.0
+      '@napplet/nap': 0.28.0
+      nostr-tools: 2.23.5(typescript@5.9.3)
+
+  '@kehto/wm@0.0.2': {}
+
   '@napplet/conformance-cli@0.2.16':
     dependencies:
       '@napplet/conformance': 0.14.0
@@ -624,7 +741,13 @@ snapshots:
     transitivePeerDependencies:
       - json-schema-to-ts
 
+  '@napplet/core@0.28.0': {}
+
   '@napplet/core@0.29.0': {}
+
+  '@napplet/nap@0.28.0':
+    dependencies:
+      '@napplet/core': 0.28.0
 
   '@napplet/nap@0.29.0':
     dependencies:

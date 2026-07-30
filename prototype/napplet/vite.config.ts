@@ -19,6 +19,24 @@ export default defineConfig({
       description: 'A portable Nostr activity pet prototype.',
       artifactMode: 'single-file',
       requires: ['identity', 'outbox'],
+      configSchema: {
+        type: 'object',
+        properties: {
+          nostrPetLocalRelayOnly: {
+            type: 'boolean',
+            title: 'Local relay only (debug)',
+            description:
+              'DEBUG ONLY: bypass NIP-65 discovery and use Paja’s configured loopback relay.',
+            default: false,
+          },
+          nostrPetLocalRelayUrl: {
+            type: 'string',
+            title: 'Local relay URL (debug)',
+            description: 'DEBUG ONLY: must resolve to localhost or a loopback address.',
+            default: 'ws://127.0.0.1:7777',
+          },
+        },
+      },
     }),
   ],
 });

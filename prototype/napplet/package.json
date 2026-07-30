@@ -15,15 +15,21 @@
     "test:fixtures": "node --test scripts/create-pet-fixtures.test.mjs",
     "test:fixtures:matrix": "node scripts/create-pet-fixtures.mjs --matrix",
     "test:fixture:nsec": "node scripts/create-pet-fixtures.mjs --paste-nsec",
+    "test:event-routing": "node --test scripts/event-routing.test.mjs",
+    "test:paja-debug": "node --test scripts/paja-nsec-debug-patch.test.mjs",
+    "test:relay-copy": "node --test scripts/copy-events-to-local-relay.test.mjs",
     "test:routing": "node --test scripts/publish-routing.test.mjs",
     "test:local-relay": "node --test scripts/local-test-relay.test.mjs",
     "relay:local": "deno run --allow-net=127.0.0.1:7777 --allow-read=.pet-test/local-relay --allow-write=.pet-test/local-relay scripts/local-test-relay.ts --port 7777 --data .pet-test/local-relay/events.json",
+    "paja:debug": "node scripts/start-paja-nsec-debug.mjs",
+    "relay:copy": "node scripts/copy-events-to-local-relay.mjs",
     "relay:query": "node scripts/query-local-relay.mjs --relay ws://127.0.0.1:7777"
   },
   "dependencies": {
     "@napplet/sdk": "^0.25.0"
   },
   "devDependencies": {
+    "@kehto/paja": "0.8.0",
     "@napplet/conformance-cli": "^0.2.16",
     "@napplet/vite-plugin": "^0.12.0",
     "nostr-tools": "2.23.5",
