@@ -102,6 +102,7 @@ select:focus-visible {
 .sync-pill,
 .local-relay-pill,
 .hybrid-relay-pill,
+.viewer-pill,
 .preview-flag {
   padding: 4px 8px;
   border-radius: 999px;
@@ -130,6 +131,28 @@ select:focus-visible {
 .hybrid-relay-pill {
   color: #23594c;
   background: #dff5ec;
+}
+
+.viewer-pill {
+  color: #31588a;
+  background: #dfeaff;
+}
+
+.view-mode-button {
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  padding: 6px 10px;
+  color: var(--shell-primary);
+  background: var(--paper-strong);
+  font-size: 12px;
+  font-weight: 780;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.view-mode-button:hover {
+  border-color: color-mix(in srgb, var(--shell-primary) 48%, var(--line));
 }
 
 .account-name {
@@ -167,6 +190,45 @@ select:focus-visible {
   border-radius: 50%;
   background: #65b77a;
   box-shadow: 0 0 0 4px color-mix(in srgb, #65b77a 16%, transparent);
+}
+
+.account-dot--viewing {
+  background: #648ec6;
+  box-shadow: 0 0 0 4px color-mix(in srgb, #648ec6 16%, transparent);
+}
+
+.viewer-banner {
+  display: flex;
+  position: relative;
+  z-index: 3;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 12px clamp(16px, 4vw, 48px);
+  border-bottom: 1px solid color-mix(in srgb, #648ec6 28%, var(--line));
+  background: color-mix(in srgb, #dfeaff 52%, var(--paper));
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.viewer-banner > span {
+  min-width: 0;
+}
+
+.viewer-banner strong {
+  margin-right: 6px;
+  color: var(--shell-text);
+}
+
+.viewer-banner code {
+  word-break: break-all;
+}
+
+.viewer-banner .secondary-button {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding-block: 7px;
 }
 
 .pet-layout {
@@ -245,6 +307,15 @@ select:focus-visible {
 
 .pet-stage:active {
   transform: translateY(1px) scale(0.985);
+}
+
+.pet-stage--readonly {
+  cursor: default;
+}
+
+.pet-stage--readonly:hover,
+.pet-stage--readonly:active {
+  transform: none;
 }
 
 .pet {
@@ -587,6 +658,26 @@ select:focus-visible {
   margin: 34px 0;
 }
 
+.view-only-card {
+  display: grid;
+  gap: 7px;
+  margin: 34px 0;
+  border: 1px solid color-mix(in srgb, #648ec6 30%, var(--line));
+  border-radius: 18px;
+  padding: 16px;
+  background: color-mix(in srgb, #dfeaff 28%, var(--paper-strong));
+}
+
+.view-only-card span {
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.view-only-card .secondary-button {
+  margin-top: 5px;
+}
+
 .care-button {
   display: grid;
   min-height: 124px;
@@ -919,6 +1010,45 @@ form > small {
   max-width: 500px;
   margin: 14px 0 0;
   font-size: 12px;
+}
+
+.viewer-entry {
+  display: grid;
+  gap: 7px;
+  width: min(100%, 560px);
+  margin-top: 18px;
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+  color: var(--ink-muted);
+  font-size: 12px;
+  text-align: left;
+}
+
+.viewer-entry > strong {
+  color: var(--shell-text);
+  font-size: 14px;
+}
+
+.viewer-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+  margin-top: 5px;
+}
+
+.viewer-form .primary-button {
+  min-width: 130px;
+}
+
+.viewed-empty-layout .adoption-card {
+  display: grid;
+  gap: 14px;
+}
+
+.viewed-empty-layout .adoption-card .primary-button,
+.viewed-empty-layout .adoption-card .secondary-button {
+  width: 100%;
 }
 
 .debug-login-note {
@@ -1429,6 +1559,11 @@ form > small {
   .adoption-art {
     min-height: 340px;
   }
+
+  .viewer-banner {
+    align-items: flex-start;
+    padding: 10px 14px;
+  }
 }
 
 @container (max-width: 420px) {
@@ -1438,6 +1573,19 @@ form > small {
 
   .sync-pill {
     display: none;
+  }
+
+  .hybrid-relay-pill,
+  .local-relay-pill,
+  .viewer-pill,
+  .account-identity,
+  .account-dot {
+    display: none;
+  }
+
+  .view-mode-button {
+    min-height: 30px;
+    padding: 5px 8px;
   }
 
   .habitat {
@@ -1536,5 +1684,21 @@ form > small {
 
   .form-columns {
     grid-template-columns: 1fr;
+  }
+
+  .viewer-banner {
+    display: grid;
+  }
+
+  .viewer-banner .secondary-button {
+    width: 100%;
+  }
+
+  .viewer-form {
+    grid-template-columns: 1fr;
+  }
+
+  .viewer-form .primary-button {
+    width: 100%;
   }
 }

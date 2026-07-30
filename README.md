@@ -39,6 +39,11 @@ To generate eight signed test accounts covering every lifecycle condition:
 pnpm run test:fixtures:matrix
 ```
 
+To append a fresh eight-account matrix to the persistent loopback relay, run
+`pnpm demo:seed`, then use **View pet** to paste any printed npub. This is a
+single-tab, signer-free, read-only demo flow. See
+[Local demo accounts and npub viewer](docs/17-local-demo-view-mode.md).
+
 The local fixture lab can also accept a disposable test `nsec` through a hidden
 prompt. Private keys never enter the napplet or generated files. See
 [Local lifecycle test lab](docs/11-local-lifecycle-test-lab.md).
@@ -92,6 +97,7 @@ limitations are in [docs/02-nostr-protocol-design.md](docs/02-nostr-protocol-des
 14. [Local-only debug mode](docs/14-local-only-debug-mode.md)
 15. [NIP-07 publish and pulse diagnostics](docs/15-nip07-publish-pulse-debug.md)
 16. [Hybrid relay policy](docs/16-hybrid-relay-policy.md)
+17. [Local demo accounts and npub viewer](docs/17-local-demo-view-mode.md)
 
 ## Decisions already made for the plan
 
@@ -100,8 +106,8 @@ limitations are in [docs/02-nostr-protocol-design.md](docs/02-nostr-protocol-des
   prototype.
 - Primary desktop signer: NIP-46 remote signing. The app never asks for or
   stores an `nsec`.
-- Login accepts `npub`/`nprofile` for read-only preview, but creating a pet or
-  posting requires a connected signer.
+- The viewer accepts an `npub` for read-only inspection, while creating a pet
+  or posting requires the matching connected signer.
 - Default lifecycle is forgiving: death occurs after 45 days without a
   qualifying recovery.
 - The prototype uses the user's NIP-65 relays plus a loopback persistence

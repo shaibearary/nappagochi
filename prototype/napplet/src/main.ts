@@ -38,6 +38,7 @@ import {
   queryEventsWithRouting,
   type EventRouting,
 } from './event-routing';
+import { isReadOnlyView, parseViewerNpub } from './view-mode';
 import './styles.css';
 
 declare global {
@@ -112,7 +113,14 @@ type PetState = ActivityState;
 type Palette = 'peach' | 'mint' | 'night';
 type Eyes = 'round' | 'sleepy' | 'sparkle';
 type Accessory = 'none' | 'bow' | 'hat';
-type Modal = 'note' | 'doctor' | 'settings' | 'preview' | 'profile' | null;
+type Modal =
+  | 'note'
+  | 'doctor'
+  | 'settings'
+  | 'preview'
+  | 'profile'
+  | 'viewer'
+  | null;
 type ProfileCheckStatus = 'pass' | 'warn' | 'fail';
 type ProfileTier = 'excellent' | 'healthy' | 'attention' | 'incomplete';
 type RelayPermissions = Record<string, { read: boolean; write: boolean }>;
@@ -234,6 +242,8 @@ const EMPTY_PROFILE_HEALTH: ProfileHealth = {
 const app = document.querySelector<HTMLElement>('#app') as HTMLElement;
 if (!app) throw new Error('Missing app root');
 
+let connectedPubkey = '';
+let viewedPubkey = '';
 let pubkey = '';
 let accountName = '';
 let accountFollows: string[] = [];
@@ -293,6 +303,18 @@ function shortNpub(value: string): string {
   return encoded.startsWith('npub1')
     ? `${encoded.slice(0, 12)}…${encoded.slice(-8)}`
     : shortKey(value);
+}
+
+function isViewingAnotherPet(): boolean {
+  return isReadOnlyView(viewedPubkey, connectedPubkey);
+}
+
+function canWriteForCurrentPet(): boolean {
+  return Boolean(
+    connectedPubkey &&
+      pubkey === connectedPubkey &&
+      !isViewingAnotherPet(),
+  );
 }
 
 function tagValue(event: NostrEvent, key: string): string | undefined {
@@ -880,12 +902,13 @@ async function refreshDerivedState(): Promise<void> {
   render();
 }
 
-async function getIdentityRelays(): Promise<RelayPermissions> {
+async function getIdentityRelays(ownerIsSigner: boolean): Promise<RelayPermissions> {
   if (eventRouting.localRelayOnly) {
     return {
       [eventRouting.localRelayUrl]: { read: true, write: true },
     };
   }
+  if (!ownerIsSigner) return {};
   try {
     return await identity.getRelays();
   } catch {
@@ -988,11 +1011,15 @@ async function setupEventRouting(): Promise<void> {
 async function load(): Promise<void> {
   loading = true;
   message = '';
+  incompleteSync = false;
+  pubkey = viewedPubkey || connectedPubkey;
   closeLiveSubscription();
   render();
 
   try {
-    pubkey = await identity.getPublicKey();
+    connectedPubkey = await identity.getPublicKey();
+    if (viewedPubkey && viewedPubkey === connectedPubkey) viewedPubkey = '';
+    pubkey = viewedPubkey || connectedPubkey;
     if (!pubkey) {
       accountName = '';
       accountFollows = [];
@@ -1009,14 +1036,15 @@ async function load(): Promise<void> {
       return;
     }
 
+    const ownerIsSigner = pubkey === connectedPubkey;
     await prepareReadRelayPlan(pubkey);
-    const profilePromise = eventRouting.localRelayOnly
+    const profilePromise = eventRouting.localRelayOnly || !ownerIsSigner
       ? Promise.resolve(null)
       : identity.getProfile();
-    const followsPromise = eventRouting.localRelayOnly
+    const followsPromise = eventRouting.localRelayOnly || !ownerIsSigner
       ? Promise.resolve([] as string[])
       : identity.getFollows().catch(() => [] as string[]);
-    const relaysPromise = getIdentityRelays();
+    const relaysPromise = getIdentityRelays(ownerIsSigner);
     const profileHealthEventsPromise = queryPetEvents(
       [
         {
@@ -1055,7 +1083,9 @@ async function load(): Promise<void> {
     const currentRelays = relaysFromEvent(relayListEvent) ?? identityRelays;
     accountFollows = currentFollows;
 
-    if (eventRouting.localRelayOnly) {
+    if (!ownerIsSigner) {
+      fallbackRelayUrls = [];
+    } else if (eventRouting.localRelayOnly) {
       fallbackRelayUrls = [eventRouting.localRelayUrl];
     } else {
       const writableIdentityRelays = Object.entries(identityRelays)
@@ -1089,7 +1119,8 @@ async function load(): Promise<void> {
     activeBirth = resolveLineage();
     health = activeBirth ? reduceHealth(activeBirth, nowSeconds()) : null;
     appearance = activeBirth ? await loadAppearance(activeBirth) : { ...DEFAULT_APPEARANCE };
-    await restorePreview();
+    if (isViewingAnotherPet()) previewState = null;
+    else await restorePreview();
     beginLiveSubscription();
   } catch (error) {
     message = error instanceof Error ? error.message : 'The Nostr history could not be loaded.';
@@ -1218,6 +1249,9 @@ function shellHeader(): string {
     : eventRouting.localRelayMirror
       ? `<span class="hybrid-relay-pill" title="${escapeHtml(hybridTitle)}">hybrid</span>`
       : '';
+  const viewerPill = isViewingAnotherPet()
+    ? '<span class="viewer-pill">viewing</span>'
+    : '';
   return `
     <header class="topbar">
       <div class="brand">
@@ -1227,6 +1261,7 @@ function shellHeader(): string {
       </div>
       <div class="account">
         ${relayModePill}
+        ${viewerPill}
         ${incompleteSync ? '<span class="sync-pill" title="Some relay results were incomplete">partial sync</span>' : ''}
         ${
           pubkey
@@ -1236,9 +1271,26 @@ function shellHeader(): string {
               </span>`
             : '<span class="account-name">signed out</span>'
         }
-        <span class="account-dot" aria-hidden="true"></span>
+        <button class="view-mode-button" type="button" data-action="view-pet">View pet</button>
+        <span class="account-dot ${isViewingAnotherPet() ? 'account-dot--viewing' : ''}" aria-hidden="true"></span>
       </div>
     </header>
+  `;
+}
+
+function viewingBannerMarkup(): string {
+  if (!isViewingAnotherPet()) return '';
+  return `
+    <section class="viewer-banner" aria-label="Read-only pet view">
+      <span>
+        <strong>Read-only view</strong>
+        This pet belongs to <code>${escapeHtml(publicNpub(pubkey))}</code>.
+        Your connected signer has not changed.
+      </span>
+      <button class="secondary-button" type="button" data-action="view-own-pet">
+        ${connectedPubkey ? 'Back to my pet' : 'Stop viewing'}
+      </button>
+    </section>
   `;
 }
 
@@ -1280,6 +1332,11 @@ function signedOutMarkup(): string {
         <span><strong>Unexpected npub?</strong> NIP-07 returns the account currently selected in your extension. Nostr Pet does not cache accounts.</span>
         <span><strong>Never paste an nsec into Nostr Pet.</strong> Keep private keys inside your signer.</span>
       </p>
+      <div class="viewer-entry">
+        <strong>Or view a public pet without signing in</strong>
+        <span>Paste an npub to inspect its Nostr-derived condition in read-only mode.</span>
+        ${viewerFormMarkup('signed-out-view-form')}
+      </div>
       ${eventRouting.localRelayOnly
         ? `<div class="debug-login-note">
             <strong>Local debug mode</strong>
@@ -1349,6 +1406,32 @@ function adoptionMarkup(previous?: Birth): string {
   `;
 }
 
+function viewedEmptyMarkup(): string {
+  return `
+    ${shellHeader()}
+    ${viewingBannerMarkup()}
+    <section class="adoption-layout viewed-empty-layout">
+      <div class="adoption-art">
+        ${petMarkup('lonely', DEFAULT_APPEARANCE)}
+      </div>
+      <div class="adoption-card">
+        <p class="eyebrow">No signed pet birth found</p>
+        <h1>This npub has no visible pet</h1>
+        <p>
+          The local and selected Nostr relays did not return a valid
+          <strong>nostr.pet.birth.v1</strong> event for this account.
+        </p>
+        <button class="primary-button" type="button" data-action="view-pet">
+          View another npub
+        </button>
+        <button class="secondary-button" type="button" data-action="view-own-pet">
+          ${connectedPubkey ? 'Back to my pet' : 'Stop viewing'}
+        </button>
+      </div>
+    </section>
+  `;
+}
+
 function paletteOptions(selected: Palette): string {
   const options: Array<{ id: Palette; label: string }> = [
     { id: 'peach', label: 'Peach' },
@@ -1378,16 +1461,34 @@ function petHomeMarkup(): string {
   const condition = previewState ? lifecycleMeta : displayedCondition(shownState);
   const ageDays = Math.max(0, Math.floor((nowSeconds() - activeBirth.event.created_at) / DAY));
   const isPreview = Boolean(previewState);
+  const readOnly = isViewingAnotherPet();
+  const petStage = readOnly
+    ? `<div class="pet-stage pet-stage--readonly">${petMarkup(shownState, appearance, condition.label)}</div>`
+    : `<button class="pet-stage" data-action="pet-menu" aria-label="Open pet actions">${petMarkup(shownState, appearance, condition.label)}</button>`;
+  const careActions = readOnly
+    ? `<div class="view-only-card">
+        <strong>Viewing only</strong>
+        <span>Care actions and appearance changes are available only to this pet’s signer.</span>
+        <button class="secondary-button" type="button" data-action="view-pet">View another npub</button>
+      </div>`
+    : `<div class="action-grid">
+        <button class="care-button" data-action="note" ${health.state === 'dead' ? 'disabled' : ''}>
+          <span>✎</span><strong>Write a note</strong><small>${health.canFeed ? 'Feeds your pet' : 'Keeps your voice active'}</small>
+        </button>
+        <button class="care-button care-button--doctor" data-action="doctor"
+          ${health.state === 'dead' ? 'disabled' : ''}>
+          <span>＋</span><strong>Visit doctor</strong><small>Reply to someone</small>
+        </button>
+      </div>`;
 
   return `
     ${shellHeader()}
+    ${viewingBannerMarkup()}
     <section class="pet-layout">
       <div class="habitat">
         <div class="ambient-shape ambient-shape--one"></div>
         <div class="ambient-shape ambient-shape--two"></div>
-        <button class="pet-stage" data-action="pet-menu" aria-label="Open pet actions">
-          ${petMarkup(shownState, appearance, condition.label)}
-        </button>
+        ${petStage}
         <div class="state-caption">
           ${isPreview ? '<span class="preview-flag">visual preview</span>' : ''}
           <span class="state-kicker">${escapeHtml(condition.label)}</span>
@@ -1402,7 +1503,7 @@ function petHomeMarkup(): string {
             <p class="eyebrow">Today’s pulse</p>
             <h2>${health.state === 'dead' ? 'Memorial' : `${health.daysQuiet} quiet ${health.daysQuiet === 1 ? 'day' : 'days'}`}</h2>
           </div>
-          <button class="icon-button" data-action="settings" aria-label="Appearance settings">⚙</button>
+          ${readOnly ? '' : '<button class="icon-button" data-action="settings" aria-label="Appearance settings">⚙</button>'}
         </div>
 
         <div class="vital-track" aria-label="Pet lifecycle">
@@ -1415,20 +1516,13 @@ function petHomeMarkup(): string {
         </div>
         <div class="next-state">
           <span>${escapeHtml(lifecycleMeta.next)}</span>
-          <button class="text-button" data-action="preview">Preview states</button>
+          ${readOnly ? '' : '<button class="text-button" data-action="preview">Preview states</button>'}
         </div>
 
-        <div class="action-grid">
-          <button class="care-button" data-action="note" ${health.state === 'dead' ? 'disabled' : ''}>
-            <span>✎</span><strong>Write a note</strong><small>${health.canFeed ? 'Feeds your pet' : 'Keeps your voice active'}</small>
-          </button>
-          <button class="care-button care-button--doctor" data-action="doctor"
-            ${health.state === 'dead' ? 'disabled' : ''}>
-            <span>＋</span><strong>Visit doctor</strong><small>Reply to someone</small>
-          </button>
-        </div>
+        ${careActions}
 
         <dl class="pet-facts">
+          <div><dt>Activity state</dt><dd>${escapeHtml(STATE_META[health.state].label)}</dd></div>
           <div><dt>Born</dt><dd>${formatDate(activeBirth.event.created_at)}</dd></div>
           <div><dt>Age</dt><dd>${ageDays} ${ageDays === 1 ? 'day' : 'days'}</dd></div>
           <div><dt>Last care</dt><dd>${formatRelative(health.lastCareAt)}</dd></div>
@@ -1443,7 +1537,7 @@ function petHomeMarkup(): string {
           <div><dt>Proof</dt><dd>${shortKey(activeBirth.event.id)}</dd></div>
         </dl>
 
-        ${health.state === 'dead'
+        ${health.state === 'dead' && !readOnly
           ? `<button class="secondary-button full-width" data-action="adopt-next">Adopt a new pet</button>`
           : ''}
       </aside>
@@ -1629,6 +1723,54 @@ function profileModalMarkup(): string {
   );
 }
 
+function viewerFormMarkup(formId: string): string {
+  return `
+    <form id="${escapeHtml(formId)}" class="viewer-form" novalidate>
+      <label>
+        Public account
+        <input
+          name="npub"
+          type="text"
+          inputmode="text"
+          placeholder="npub1…"
+          autocomplete="off"
+          autocapitalize="none"
+          spellcheck="false"
+          aria-label="Nostr npub to view"
+          required
+        />
+      </label>
+      <button class="primary-button" type="button" data-submit="view">
+        View this pet
+      </button>
+    </form>
+  `;
+}
+
+function viewerModalMarkup(): string {
+  return modalFrame(
+    'View another Nostr Pet',
+    `
+      <p class="modal-copy">
+        Paste a public <strong>npub</strong>. This changes only the account being
+        viewed; it never changes or uses your connected signer.
+      </p>
+      ${viewerFormMarkup('modal-view-form')}
+      <p class="security-note">
+        <span><strong>Read-only:</strong> viewing cannot post, feed, heal, adopt, or edit another pet.</span>
+        <span><strong>Do not paste an nsec.</strong> Private-key input is rejected.</span>
+      </p>
+      ${
+        isViewingAnotherPet()
+          ? `<button class="secondary-button full-width" type="button" data-action="view-own-pet">
+              ${connectedPubkey ? 'Back to my pet' : 'Stop viewing'}
+            </button>`
+          : ''
+      }
+    `,
+  );
+}
+
 function modalFrame(title: string, body: string): string {
   return `
     <div class="modal-backdrop" data-action="close-modal">
@@ -1649,6 +1791,7 @@ function modalMarkup(): string {
   if (modal === 'settings') return settingsModalMarkup();
   if (modal === 'preview') return previewModalMarkup();
   if (modal === 'profile') return profileModalMarkup();
+  if (modal === 'viewer') return viewerModalMarkup();
   return '';
 }
 
@@ -1681,7 +1824,9 @@ function render(): void {
   let content = '';
   if (loading) content = loadingMarkup();
   else if (!pubkey) content = signedOutMarkup();
-  else if (!activeBirth) content = adoptionMarkup();
+  else if (!activeBirth) {
+    content = isViewingAnotherPet() ? viewedEmptyMarkup() : adoptionMarkup();
+  }
   else content = petHomeMarkup();
 
   app.innerHTML = `
@@ -1694,6 +1839,8 @@ function render(): void {
 }
 
 function bindInteractions(): void {
+  bindActionForm('signed-out-view-form', 'view', handleView, true);
+  bindActionForm('modal-view-form', 'view', handleView, true);
   bindActionForm('adopt-form', 'adopt', handleAdopt, true);
   bindActionForm('note-form', 'note', handleNote);
   bindActionForm('doctor-form', 'doctor', handleDoctor);
@@ -1708,17 +1855,26 @@ function bindInteractions(): void {
       if (action === 'close-modal') {
         modal = null;
         render();
-      } else if (action === 'note' || action === 'pet-menu') {
+      } else if (action === 'view-pet') {
+        modal = 'viewer';
+        message = '';
+        render();
+      } else if (action === 'view-own-pet') {
+        viewedPubkey = '';
+        modal = null;
+        previewState = null;
+        void load();
+      } else if ((action === 'note' || action === 'pet-menu') && canWriteForCurrentPet()) {
         modal = 'note';
         render();
-      } else if (action === 'doctor') {
+      } else if (action === 'doctor' && canWriteForCurrentPet()) {
         modal = 'doctor';
         doctorCandidates = [];
         doctorSource = null;
         doctorLoading = true;
         render();
         void loadDoctorCandidates();
-      } else if (action === 'settings') {
+      } else if (action === 'settings' && canWriteForCurrentPet()) {
         modal = 'settings';
         render();
       } else if (action === 'preview') {
@@ -1784,6 +1940,9 @@ async function publishEvent(
   options: OutboxPublishOptions = {},
   extraFallbackRelays: string[] = [],
 ): Promise<OutboxPublishResult> {
+  if (!canWriteForCurrentPet()) {
+    throw new Error('Viewing mode is read-only. Return to your own pet to publish.');
+  }
   const explicitRelays = uniqueRelayUrls([
     ...fallbackRelayUrls,
     ...(options.relays ?? []),
@@ -1802,6 +1961,21 @@ async function publishEvent(
         ? false
         : undefined,
   );
+}
+
+async function handleView(form: HTMLFormElement): Promise<void> {
+  const data = new FormData(form);
+  try {
+    const target = parseViewerNpub(String(data.get('npub') ?? ''));
+    viewedPubkey = target === connectedPubkey ? '' : target;
+    modal = null;
+    previewState = null;
+    await load();
+  } catch (error) {
+    message =
+      error instanceof Error ? error.message : 'That npub could not be opened.';
+    render();
+  }
 }
 
 async function handleAdopt(form: HTMLFormElement): Promise<void> {
