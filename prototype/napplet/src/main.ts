@@ -1091,9 +1091,16 @@ function signedOutMarkup(): string {
     <section class="welcome-card">
       <div class="mini-pet">${petMarkup('content', DEFAULT_APPEARANCE)}</div>
       <p class="eyebrow">A small life tied to your public voice</p>
-      <h1>Sign in through your Nostr shell</h1>
-      <p>Nostr Pet never asks for your private key. The host handles identity, signing, and relays.</p>
-      <div class="notice">Choose an account in the napplet host, then reopen or refresh this view.</div>
+      <h1>Connect your Nostr signer</h1>
+      <p>Choose <strong>NIP-07</strong> in Paja's Signer section. Nostr Pet receives only your public identity.</p>
+      <div class="sign-in-status" role="status">
+        <span class="status-pulse" aria-hidden="true"></span>
+        <span><strong>Waiting for NIP-07</strong><small>No account is connected yet.</small></span>
+      </div>
+      <p class="security-note">
+        <span><strong>Signer not found?</strong> Enable a NIP-07 extension in this browser, then reload Paja.</span>
+        <span><strong>Never paste an nsec into Nostr Pet.</strong> Keep private keys inside your signer.</span>
+      </p>
     </section>
   `;
 }

@@ -843,6 +843,53 @@ form > small {
   height: 180px;
 }
 
+.sign-in-status {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 13px 15px;
+  background: var(--paper);
+}
+
+.sign-in-status > span:last-child {
+  display: grid;
+  gap: 3px;
+}
+
+.sign-in-status small {
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.sign-in-status {
+  width: min(100%, 500px);
+  margin-top: 18px;
+  border-color: color-mix(in srgb, var(--shell-primary) 45%, var(--line));
+  text-align: left;
+}
+
+.status-pulse {
+  width: 12px;
+  height: 12px;
+  margin: 9px;
+  border-radius: 50%;
+  background: var(--shell-primary);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--shell-primary) 45%, transparent);
+  animation: status-pulse 1.8s ease-out infinite;
+}
+
+.security-note {
+  display: grid;
+  gap: 5px;
+  max-width: 500px;
+  margin: 14px 0 0;
+  font-size: 12px;
+}
+
 .notice,
 .empty-state {
   border: 1px solid var(--line);
@@ -1265,6 +1312,16 @@ form > small {
   }
 }
 
+@keyframes status-pulse {
+  70% {
+    box-shadow: 0 0 0 8px transparent;
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -1402,6 +1459,25 @@ form > small {
 
   .adoption-card h1 {
     font-size: 42px;
+  }
+
+  .welcome-card {
+    align-content: start;
+    min-height: calc(100vh - 54px);
+    padding: 22px 15px 30px;
+  }
+
+  .welcome-card h1 {
+    font-size: 40px;
+  }
+
+  .mini-pet {
+    height: 145px;
+  }
+
+  .sign-in-status {
+    margin-top: 12px;
+    padding: 11px 12px;
   }
 
   .modal-card {
