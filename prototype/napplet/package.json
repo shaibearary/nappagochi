@@ -15,6 +15,7 @@
     "test:fixtures": "node --test scripts/create-pet-fixtures.test.mjs",
     "test:fixtures:matrix": "node scripts/create-pet-fixtures.mjs --matrix",
     "test:fixture:nsec": "node scripts/create-pet-fixtures.mjs --paste-nsec",
+    "test:activity": "node --test scripts/activity-reconciliation.test.mjs",
     "test:event-routing": "node --test scripts/event-routing.test.mjs",
     "test:paja-debug": "node --test scripts/paja-nsec-debug-patch.test.mjs",
     "test:relay-copy": "node --test scripts/copy-events-to-local-relay.test.mjs",

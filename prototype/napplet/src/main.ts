@@ -23,6 +23,13 @@ import {
 } from '@napplet/sdk';
 import { npubEncode } from 'nostr-tools/nip19';
 import {
+  acceptedRelayCount,
+  mergeEventHistory,
+  reduceActivityHealth,
+  requireAcceptedPublishedEvent,
+  type ActivityState,
+} from './activity-reconciliation';
+import {
   eventRoutingFromConfig,
   getEventWithRouting,
   publishEventWithRouting,
@@ -98,7 +105,7 @@ const DEFAULT_PUBLISH_RELAYS = [
   'wss://relay.snort.social',
 ];
 
-type PetState = 'happy' | 'content' | 'lonely' | 'sick' | 'critical' | 'dead';
+type PetState = ActivityState;
 type Palette = 'peach' | 'mint' | 'night';
 type Eyes = 'round' | 'sleepy' | 'sparkle';
 type Accessory = 'none' | 'bow' | 'hat';
@@ -695,45 +702,15 @@ function parseBirth(event: NostrEvent): Birth | null {
   }
 }
 
-function stateForElapsed(seconds: number): PetState {
-  if (seconds < 3 * DAY) return 'happy';
-  if (seconds < 7 * DAY) return 'content';
-  if (seconds < 14 * DAY) return 'lonely';
-  if (seconds < 30 * DAY) return 'sick';
-  if (seconds < 45 * DAY) return 'critical';
-  return 'dead';
-}
-
 function reduceHealth(birth: Birth, at: number): Health {
-  let lastCareAt = birth.event.created_at;
-  const activity = notes
-    .filter(
-      (event) =>
-        event.pubkey === pubkey &&
-        event.created_at >= birth.event.created_at &&
-        event.created_at <= at &&
-        event.created_at <= nowSeconds() + FUTURE_TOLERANCE,
-    )
-    .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
-
-  for (const event of activity) {
-    const stateBefore = stateForElapsed(Math.max(0, event.created_at - lastCareAt));
-    if (stateBefore === 'dead') break;
-    if (verifiedMedicineIds.has(event.id)) {
-      lastCareAt = event.created_at;
-    } else if (!hasReplyTag(event) && stateBefore !== 'sick' && stateBefore !== 'critical') {
-      lastCareAt = event.created_at;
-    }
-  }
-
-  const quietSeconds = Math.max(0, at - lastCareAt);
-  const state = stateForElapsed(quietSeconds);
-  return {
-    state,
-    lastCareAt,
-    daysQuiet: Math.floor(quietSeconds / DAY),
-    canFeed: state === 'happy' || state === 'content' || state === 'lonely',
-  };
+  return reduceActivityHealth({
+    birthCreatedAt: birth.event.created_at,
+    ownerPubkey: pubkey,
+    notes,
+    verifiedMedicineIds,
+    at,
+    daySeconds: DAY,
+  });
 }
 
 function resolveLineage(): Birth | null {
@@ -1215,6 +1192,7 @@ function signedOutMarkup(): string {
       </div>
       <p class="security-note">
         <span><strong>Signer not found?</strong> Enable a NIP-07 extension in this browser, then reload Paja.</span>
+        <span><strong>Unexpected npub?</strong> NIP-07 returns the account currently selected in your extension. Nostr Pet does not cache accounts.</span>
         <span><strong>Never paste an nsec into Nostr Pet.</strong> Keep private keys inside your signer.</span>
       </p>
       ${eventRouting.localRelayOnly
@@ -1388,6 +1366,7 @@ function noteModalMarkup(): string {
       <p class="modal-copy">${health?.canFeed
         ? 'A top-level kind 1 note will feed your pet.'
         : 'Your pet is sick, so this note will not heal it. A reply is the medicine.'}</p>
+      <p class="modal-copy">Paja’s confirmation authorizes the request; your NIP-07 signer may prompt separately. Success appears only after the signer returns an event and a relay accepts it.</p>
       <form id="note-form">
         <label>Your note
           <textarea name="content" maxlength="1000" rows="5" placeholder="What’s on your mind?" required></textarea>
@@ -1794,13 +1773,24 @@ async function handleNote(form: HTMLFormElement): Promise<void> {
       tags: [],
       created_at: nowSeconds(),
     });
-    if (!result.ok) throw new Error(result.error || 'The note was not accepted.');
+    const published = requireAcceptedPublishedEvent(result, {
+      ownerPubkey: pubkey,
+      kind: 1,
+    });
+    const fedPet = Boolean(health?.canFeed);
+    notes = mergeEventHistory(notes, [published]);
     modal = null;
-    const successMessage = health?.canFeed
-      ? 'Note published. Your pet enjoyed the meal.'
-      : 'Note published.';
-    await load();
-    message = successMessage;
+    await refreshDerivedState();
+    const relayCount = acceptedRelayCount(result);
+    const acceptance =
+      eventRouting.localRelayOnly && result.relays?.[eventRouting.localRelayUrl]
+        ? 'the local relay'
+        : relayCount
+          ? `${relayCount} relay${relayCount === 1 ? '' : 's'}`
+          : 'the shell’s relay plan';
+    message = fedPet
+      ? `Note signed and accepted by ${acceptance}. Pulse refreshed to ${health?.daysQuiet ?? 0} quiet days.`
+      : `Note signed and accepted by ${acceptance}.`;
   } catch (error) {
     message = error instanceof Error ? error.message : 'The note could not be published.';
   } finally {
@@ -1931,9 +1921,13 @@ async function handleDoctor(form: HTMLFormElement): Promise<void> {
       { toOutbox: true, toInboxes: [candidate.event.pubkey] },
       relayHint ? [relayHint] : [],
     );
-    if (!result.ok) throw new Error(result.error || 'The reply was not accepted.');
+    const published = requireAcceptedPublishedEvent(result, {
+      ownerPubkey: pubkey,
+      kind: 1,
+    });
+    notes = mergeEventHistory(notes, [published]);
     modal = null;
-    await load();
+    await refreshDerivedState();
     message = 'Reply published. The verified medicine is working.';
   } catch (error) {
     message = error instanceof Error ? error.message : 'The reply could not be published.';
