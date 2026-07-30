@@ -15,6 +15,7 @@ import {
   type Subscription,
   type Theme,
 } from '@napplet/sdk';
+import { publishOutboxFirst } from './publish-routing';
 import './styles.css';
 
 declare global {
@@ -212,7 +213,6 @@ let appearance: Appearance = { ...DEFAULT_APPEARANCE };
 let health: Health | null = null;
 let profileHealth: ProfileHealth = { ...EMPTY_PROFILE_HEALTH };
 let fallbackRelayUrls: string[] = [];
-let relayFallbackActive = false;
 let incompleteSync = false;
 let loading = true;
 let actionBusy = false;
@@ -869,7 +869,6 @@ async function load(): Promise<void> {
       health = null;
       profileHealth = { ...EMPTY_PROFILE_HEALTH };
       fallbackRelayUrls = [];
-      relayFallbackActive = false;
       loading = false;
       render();
       return;
@@ -921,7 +920,6 @@ async function load(): Promise<void> {
     fallbackRelayUrls = uniqueRelayUrls(
       writableIdentityRelays.length ? writableIdentityRelays : DEFAULT_PUBLISH_RELAYS,
     );
-    relayFallbackActive = !relayListEvent;
     profileHealth = await calculateProfileHealth(
       pubkey,
       currentProfile,
@@ -1143,8 +1141,8 @@ function adoptionMarkup(previous?: Birth): string {
           ${actionBusy ? 'Creating signed event…' : 'Adopt this pet'}
         </button>
         <small>
-          You will approve a kind 78 event in your Nostr host. If your account has
-          no relay list, the host will try the prototype’s fallback relays.
+          You will approve a kind 78 event in your Nostr host. Paja chooses relays
+          first; fallbacks are tried only when its relay list is unavailable.
         </small>
       </form>
     </section>
@@ -1590,26 +1588,13 @@ async function publishEvent(
     ...(options.relays ?? []),
     ...extraFallbackRelays,
   ]);
-  const fallbackOptions: OutboxPublishOptions = {
-    ...options,
-    relays: explicitRelays,
-    toOutbox: false,
-  };
-
-  if (relayFallbackActive && explicitRelays.length) {
-    return outbox.publish(template, fallbackOptions);
-  }
-
-  const result = await outbox.publish(template, options);
-  if (
-    !result.ok &&
-    explicitRelays.length &&
-    result.error?.toLowerCase().includes('relay list unavailable')
-  ) {
-    relayFallbackActive = true;
-    return outbox.publish(template, fallbackOptions);
-  }
-  return result;
+  return publishOutboxFirst(
+    (currentTemplate, currentOptions) =>
+      outbox.publish(currentTemplate, currentOptions),
+    template,
+    options,
+    explicitRelays,
+  );
 }
 
 async function handleAdopt(form: HTMLFormElement): Promise<void> {
