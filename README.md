@@ -15,6 +15,11 @@ The implementation is in [`prototype/napplet`](prototype/napplet/README.md).
 The release address and update procedure are documented in
 [Public napplet deployment](docs/18-public-napplet-deployment.md).
 
+For a public, signer-free presentation, use the eight permanent view-only demo
+accounts in the [Public demo guide](docs/20-public-demo-guide.md). The guide
+contains the exact clicks, narration, npubs, and all 26 signed events used in
+the presentation.
+
 ```bash
 cd prototype/napplet
 pnpm install
@@ -105,6 +110,7 @@ limitations are in [docs/02-nostr-protocol-design.md](docs/02-nostr-protocol-des
 17. [Local demo accounts and npub viewer](docs/17-local-demo-view-mode.md)
 18. [Public napplet deployment](docs/18-public-napplet-deployment.md)
 19. [Hosted publish-routing fix](docs/19-hosted-publish-fix.md)
+20. [Public demo guide and event inventory](docs/20-public-demo-guide.md)
 
 ## Decisions already made for the plan
 

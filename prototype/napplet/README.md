@@ -15,6 +15,12 @@ update procedure are in
 The 2026-07-31 hosted publish-routing fix is documented in
 [`docs/19-hosted-publish-fix.md`](../../docs/19-hosted-publish-fix.md).
 
+For a hosted, signer-free presentation, follow the
+[`public demo guide`](../../docs/20-public-demo-guide.md). It provides exact
+clicks and narration for eight view-only accounts, plus an inventory of every
+signed event used. The machine-readable account and relay record is
+[`public-demo-accounts.json`](../../docs/public-demo-accounts.json).
+
 ## What works
 
 - Recovers an existing pet from kind `78` birth events.
@@ -73,6 +79,21 @@ Paja loads it into an isolated memory relay rather than publishing publicly.
 The Happy fixture has no follows and exercises the public Discover fallback;
 the Content fixture includes one followed author and exercises the primary
 doctor route.
+
+The checked-in public demo set can be independently checked and its guide
+regenerated without creating new events:
+
+```bash
+pnpm demo:public:verify
+pnpm demo:public:guide
+```
+
+Creating a replacement public matrix is deliberately guarded because it
+permanently publishes signed fixture events to public relays:
+
+```bash
+pnpm demo:public:publish -- --confirm-public
+```
 
 To build one scenario from an existing disposable test key:
 

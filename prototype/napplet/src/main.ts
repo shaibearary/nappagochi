@@ -1431,9 +1431,8 @@ function signedOutMarkup(): string {
     ${shellHeader()}
     <section class="welcome-card">
       <div class="mini-pet">${petMarkup('content', DEFAULT_APPEARANCE)}</div>
-      <p class="eyebrow">A small life tied to your public voice</p>
+      <p class="eyebrow">Tied to your Nostr posts</p>
       <h1>Connect your Nostr signer</h1>
-      <p>Choose <strong>NIP-07</strong> in Paja's Signer section. Nostr Pet receives only your public identity.</p>
       <div class="sign-in-status" role="status">
         <span class="status-pulse" aria-hidden="true"></span>
         <span><strong>Waiting for NIP-07</strong><small>No account is connected yet.</small></span>
