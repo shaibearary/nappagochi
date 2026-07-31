@@ -1435,7 +1435,7 @@ function signedOutMarkup(): string {
       <h1>Connect your Nostr signer</h1>
       <div class="sign-in-status" role="status">
         <span class="status-pulse" aria-hidden="true"></span>
-        <span><strong>Waiting for NIP-07</strong><small>No account is connected yet.</small></span>
+        <span><strong>Waiting for a signer</strong><small>NIP-07 on desktop · Amber via Bunker on Android.</small></span>
       </div>
       <div class="viewer-entry">
         <strong>Or view a public pet without signing in</strong>
@@ -1679,7 +1679,7 @@ function noteModalMarkup(): string {
       <p class="modal-copy">${health?.canFeed
         ? 'A top-level kind 1 note will feed your pet.'
         : 'Your pet is sick, so this note will not heal it. A reply is the medicine.'}</p>
-      <p class="modal-copy">Paja’s confirmation authorizes the request; your NIP-07 signer may prompt separately. Success appears only after the signer returns an event and a relay accepts it.</p>
+      <p class="modal-copy">Paja’s confirmation authorizes the request; your connected signer may prompt separately. Success appears only after the signer returns an event and a relay accepts it.</p>
       <form id="note-form">
         <label>Your note
           <textarea name="content" maxlength="1000" rows="5" placeholder="What’s on your mind?" required></textarea>
