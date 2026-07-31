@@ -9,17 +9,6 @@ operating-system desktop overlay.
 [Open Nostr Pet in Kehto's hosted Paja runtime](https://kehto.github.io/web/paja/?naddr=naddr1qvzqqqyf8ypzqte9nen2lgah6szky3hr0ympcj5v3znps9umamlzsm53fxn9ynyxqyxhwumn8ghj7mn0wvhxcmmvqy28wumn8ghj7un9d3shjtnyv9kh2uewd9hsz9nhwden5te0wfjkccte9ec8y6tdv9kzumn9wsqqjmn0wd68yttsv46qhg7xxf).
 
 The public pointer is a kind `35129` named manifest with d-tag `nostr-pet`.
-Release identity, relays, Blossom mirrors, hashes, verification results, and the
-update procedure are in
-[`docs/18-public-napplet-deployment.md`](../../docs/18-public-napplet-deployment.md).
-The 2026-07-31 hosted publish-routing fix is documented in
-[`docs/19-hosted-publish-fix.md`](../../docs/19-hosted-publish-fix.md).
-
-For a hosted, signer-free presentation, follow the
-[`public demo guide`](../../docs/20-public-demo-guide.md). It provides exact
-clicks and narration for eight view-only accounts, plus an inventory of every
-signed event used. The machine-readable account and relay record is
-[`public-demo-accounts.json`](../../docs/public-demo-accounts.json).
 
 ## What works
 
@@ -80,21 +69,6 @@ The Happy fixture has no follows and exercises the public Discover fallback;
 the Content fixture includes one followed author and exercises the primary
 doctor route.
 
-The checked-in public demo set can be independently checked and its guide
-regenerated without creating new events:
-
-```bash
-pnpm demo:public:verify
-pnpm demo:public:guide
-```
-
-Creating a replacement public matrix is deliberately guarded because it
-permanently publishes signed fixture events to public relays:
-
-```bash
-pnpm demo:public:publish -- --confirm-public
-```
-
 To build one scenario from an existing disposable test key:
 
 ```bash
@@ -104,17 +78,13 @@ pnpm run test:fixture:nsec -- --scenario sick
 The prompt hides the `nsec`; the tool never prints or writes it and overwrites
 the secret bytes before exit. Do not use a real identity or a key controlling
 funds. Private-key handling remains completely outside the production napplet.
-See [`docs/11-local-lifecycle-test-lab.md`](../../docs/11-local-lifecycle-test-lab.md)
-for all scenarios and commands.
 
-For a persistent, loopback-only live relay test, see
-[`docs/13-local-relay-test.md`](../../docs/13-local-relay-test.md). The napplet
-still publishes through NAP-OUTBOX; Paja owns the WebSocket connection.
+For a persistent, loopback-only live relay test, the napplet still publishes
+through NAP-OUTBOX; Paja owns the WebSocket connection.
 
 For deterministic recovery without public relay discovery, including copying
-an already-signed pet event into the loopback relay, see
-[`docs/14-local-only-debug-mode.md`](../../docs/14-local-only-debug-mode.md).
-Start the relay, Vite, and Paja together with:
+an already-signed pet event into the loopback relay, start the relay, Vite, and
+Paja together with:
 
 ```bash
 pnpm demo:local
@@ -161,6 +131,3 @@ relays.
 - The source of truth is signed Nostr history, not local UI state.
 - Local fixture generation is a separate Node development script and is absent
   from the single-file production artifact.
-
-The product design and exact event formats live in the repository-level
-`docs/` directory.

@@ -5,20 +5,11 @@ owner's public Nostr activity.
 
 Status: **napplet published; native desktop shell not started**.
 
-![Nostr Pet napplet prototype](docs/images/napplet-prototype-desktop.png)
-
 ## Try the prototype
 
 The implementation is in [`prototype/napplet`](prototype/napplet/README.md).
 
 [Open the public Nostr Pet napplet in Kehto Paja](https://kehto.github.io/web/paja/?naddr=naddr1qvzqqqyf8ypzqte9nen2lgah6szky3hr0ympcj5v3znps9umamlzsm53fxn9ynyxqyxhwumn8ghj7mn0wvhxcmmvqy28wumn8ghj7un9d3shjtnyv9kh2uewd9hsz9nhwden5te0wfjkccte9ec8y6tdv9kzumn9wsqqjmn0wd68yttsv46qhg7xxf).
-The release address and update procedure are documented in
-[Public napplet deployment](docs/18-public-napplet-deployment.md).
-
-For a public, signer-free presentation, use the eight permanent view-only demo
-accounts in the [Public demo guide](docs/20-public-demo-guide.md). The guide
-contains the exact clicks, narration, npubs, and all 26 signed events used in
-the presentation.
 
 ```bash
 cd prototype/napplet
@@ -50,22 +41,19 @@ pnpm run test:fixtures:matrix
 
 To append a fresh eight-account matrix to the persistent loopback relay, run
 `pnpm demo:seed`, then use **View pet** to paste any printed npub. This is a
-single-tab, signer-free, read-only demo flow. See
-[Local demo accounts and npub viewer](docs/17-local-demo-view-mode.md).
+single-tab, signer-free, read-only demo flow.
 
 The local fixture lab can also accept a disposable test `nsec` through a hidden
-prompt. Private keys never enter the napplet or generated files. See
-[Local lifecycle test lab](docs/11-local-lifecycle-test-lab.md).
+prompt. Private keys never enter the napplet or generated files.
 
 For the local-only interactive test page, start the loopback relay and Vite,
 then run `pnpm paja:debug`. Open `http://127.0.0.1:5197/` and use the
-**Test nsec** field in Paja's Signer panel with a disposable key. See
-[Local-only debug mode](docs/14-local-only-debug-mode.md).
+**Test nsec** field in Paja's Signer panel with a disposable key.
 
 For normal NIP-07 testing with local persistence, keep the loopback relay
 running and use `pnpm paja:hybrid`. The shell follows NIP-65 and mirrors to the
 local relay; if NIP-65 is unavailable, it uses local plus the public fallback
-relays. See [Hybrid relay policy](docs/16-hybrid-relay-policy.md).
+relays.
 
 ## Product premise
 
@@ -85,32 +73,6 @@ relays. See [Hybrid relay policy](docs/16-hybrid-relay-policy.md).
 
 Use NIP-78 kind `78` for append-only pet records and kind `30078` for replaceable
 appearance/preferences. Do not invent a new event kind for the MVP.
-
-The event design, examples, relay queries, lifecycle algorithm, and protocol
-limitations are in [docs/02-nostr-protocol-design.md](docs/02-nostr-protocol-design.md).
-
-## Documents
-
-1. [Product and UX](docs/01-product-and-ux.md)
-2. [Nostr protocol design](docs/02-nostr-protocol-design.md)
-3. [Lifecycle rules](docs/03-lifecycle-rules.md)
-4. [Technical architecture](docs/04-technical-architecture.md)
-5. [Implementation plan](docs/05-implementation-plan.md)
-6. [Risks and open decisions](docs/06-risks-and-open-decisions.md)
-7. [Research sources](docs/07-research-sources.md)
-8. [Napplet prototype specification](docs/08-napplet-prototype-spec.md)
-9. [Prototype build report](docs/09-prototype-build-report.md)
-10. [Profile-health integration](docs/10-profile-health-integration.md)
-11. [Local lifecycle test lab](docs/11-local-lifecycle-test-lab.md)
-12. [Demo runbook](docs/12-demo-runbook.md)
-13. [Local relay persistence test](docs/13-local-relay-test.md)
-14. [Local-only debug mode](docs/14-local-only-debug-mode.md)
-15. [NIP-07 publish and pulse diagnostics](docs/15-nip07-publish-pulse-debug.md)
-16. [Hybrid relay policy](docs/16-hybrid-relay-policy.md)
-17. [Local demo accounts and npub viewer](docs/17-local-demo-view-mode.md)
-18. [Public napplet deployment](docs/18-public-napplet-deployment.md)
-19. [Hosted publish-routing fix](docs/19-hosted-publish-fix.md)
-20. [Public demo guide and event inventory](docs/20-public-demo-guide.md)
 
 ## Decisions already made for the plan
 
