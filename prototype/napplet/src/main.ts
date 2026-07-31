@@ -1,6 +1,7 @@
 import {
   config,
   identity,
+  link,
   outbox,
   relay,
   resource,
@@ -38,6 +39,11 @@ import {
   queryEventsWithRouting,
   type EventRouting,
 } from './event-routing';
+import {
+  HABITAT_SICK_AFTER_DAYS,
+  applyHabitatSickness,
+  reduceHabitatSickness,
+} from './habitat-sickness';
 import { isReadOnlyView, parseViewerNpub } from './view-mode';
 import './styles.css';
 
@@ -77,6 +83,9 @@ declare global {
       resource?: {
         bytes?: unknown;
       };
+      link?: {
+        open?: unknown;
+      };
     };
   }
 }
@@ -87,6 +96,17 @@ const DAY = 86_400;
 const DOCTOR_DISCOVERY_LOOKBACK = 7 * DAY;
 const FUTURE_TOLERANCE = 600;
 const PROFILE_HEALTH_MAX = 8;
+const GIGI_PROFILE_HEALTH_URL =
+  'https://github.com/dergigi/napplet-workshop/tree/master/profile-health';
+const HABITAT_EVENT_KINDS = new Set([
+  0,
+  3,
+  10_002,
+  10_019,
+  10_050,
+  17_375,
+  37_375,
+]);
 const PROFILE_FIELDS: Array<keyof ProfileData> = [
   'name',
   'displayName',
@@ -148,9 +168,12 @@ type Birth = {
 
 type Health = {
   state: PetState;
+  activityState: PetState;
   lastCareAt: number;
   daysQuiet: number;
   canFeed: boolean;
+  habitatSick: boolean;
+  habitatDaysIncomplete: number;
 };
 
 type DoctorCandidate = {
@@ -249,6 +272,7 @@ let accountName = '';
 let accountFollows: string[] = [];
 let births: Birth[] = [];
 let notes: NostrEvent[] = [];
+let profileEvents: NostrEvent[] = [];
 let verifiedMedicineIds = new Set<string>();
 let activeBirth: Birth | null = null;
 let appearance: Appearance = { ...DEFAULT_APPEARANCE };
@@ -421,6 +445,26 @@ function parseAddress(value: string): { name: string; domain: string } | null {
 
 function hasResourceDomain(): boolean {
   return typeof window.napplet?.resource?.bytes === 'function';
+}
+
+function hasLinkDomain(): boolean {
+  return typeof window.napplet?.link?.open === 'function';
+}
+
+async function openHabitatSource(): Promise<void> {
+  if (!hasLinkDomain()) return;
+  try {
+    const result = await link.open(GIGI_PROFILE_HEALTH_URL, {
+      label: "Open Gigi's Profile Health project",
+    });
+    if (result.status !== 'opened') {
+      message = 'The shell did not open the Habitat source.';
+      render();
+    }
+  } catch {
+    message = 'The Habitat source is unavailable in this shell.';
+    render();
+  }
 }
 
 async function readJsonResource(url: string): Promise<Record<string, unknown>> {
@@ -730,8 +774,36 @@ function parseBirth(event: NostrEvent): Birth | null {
   }
 }
 
+function latestHabitatChangeAt(birth: Birth, at: number): number {
+  return profileEvents
+    .filter(
+      (event) =>
+        HABITAT_EVENT_KINDS.has(event.kind) &&
+        event.created_at >= birth.event.created_at &&
+        event.created_at <= at,
+    )
+    .reduce(
+      (latest, event) => Math.max(latest, event.created_at),
+      birth.event.created_at,
+    );
+}
+
+function latestMedicineAt(birth: Birth, at: number): number {
+  return notes
+    .filter(
+      (event) =>
+        verifiedMedicineIds.has(event.id) &&
+        event.created_at >= birth.event.created_at &&
+        event.created_at <= at,
+    )
+    .reduce(
+      (latest, event) => Math.max(latest, event.created_at),
+      birth.event.created_at,
+    );
+}
+
 function reduceHealth(birth: Birth, at: number): Health {
-  return reduceActivityHealth({
+  const activity = reduceActivityHealth({
     birthCreatedAt: birth.event.created_at,
     ownerPubkey: pubkey,
     notes,
@@ -739,6 +811,22 @@ function reduceHealth(birth: Birth, at: number): Health {
     at,
     daySeconds: DAY,
   });
+  const habitat = reduceHabitatSickness({
+    incomplete: profileHealth.tier === 'incomplete',
+    birthCreatedAt: birth.event.created_at,
+    lastHabitatChangeAt: latestHabitatChangeAt(birth, at),
+    lastMedicineAt: latestMedicineAt(birth, at),
+    at,
+    daySeconds: DAY,
+  });
+  return {
+    ...activity,
+    state: applyHabitatSickness(activity.state, habitat.sick),
+    activityState: activity.state,
+    canFeed: activity.canFeed && !habitat.sick,
+    habitatSick: habitat.sick,
+    habitatDaysIncomplete: habitat.daysIncomplete,
+  };
 }
 
 function resolveLineage(): Birth | null {
@@ -1027,6 +1115,7 @@ async function load(): Promise<void> {
       accountFollows = [];
       births = [];
       notes = [];
+      profileEvents = [];
       activeBirth = null;
       health = null;
       profileHealth = { ...EMPTY_PROFILE_HEALTH };
@@ -1076,7 +1165,7 @@ async function load(): Promise<void> {
         birthPromise,
         notePromise,
       ]);
-    const profileEvents = profileHealthResult.events.map((item) => item.event);
+    profileEvents = profileHealthResult.events.map((item) => item.event);
     const relayListEvent = latestEvent(profileEvents, 10_002);
     const eventProfile = profileFromEvent(latestEvent(profileEvents, 0));
     const eventFollows = followsFromEvent(latestEvent(profileEvents, 3));
@@ -1154,6 +1243,18 @@ function profileTierLabel(tier: ProfileTier): string {
 }
 
 function displayedCondition(state: PetState): { label: string; note: string } {
+  if (
+    state === 'sick' &&
+    health?.habitatSick &&
+    (health.activityState === 'happy' ||
+      health.activityState === 'content' ||
+      health.activityState === 'lonely')
+  ) {
+    return {
+      label: 'Sick',
+      note: `Its habitat has remained incomplete for ${HABITAT_SICK_AFTER_DAYS} days. Medicine can help it recover.`,
+    };
+  }
   if (state === 'happy') {
     if (profileHealth.score === PROFILE_HEALTH_MAX) {
       return {
@@ -1329,11 +1430,6 @@ function signedOutMarkup(): string {
         <span class="status-pulse" aria-hidden="true"></span>
         <span><strong>Waiting for NIP-07</strong><small>No account is connected yet.</small></span>
       </div>
-      <p class="security-note">
-        <span><strong>Signer not found?</strong> Enable a NIP-07 extension in this browser, then reload Paja.</span>
-        <span><strong>Unexpected npub?</strong> NIP-07 returns the account currently selected in your extension. Nostr Pet does not cache accounts.</span>
-        <span><strong>Never paste an nsec into Nostr Pet.</strong> Keep private keys inside your signer.</span>
-      </p>
       <div class="viewer-entry">
         <strong>Or view a public pet without signing in</strong>
         <span>Paste an npub to inspect its Nostr-derived condition in read-only mode.</span>
@@ -1464,6 +1560,27 @@ function petHomeMarkup(): string {
   const ageDays = Math.max(0, Math.floor((nowSeconds() - activeBirth.event.created_at) / DAY));
   const isPreview = Boolean(previewState);
   const readOnly = isViewingAnotherPet();
+  const habitatOnlySickness =
+    !isPreview &&
+    health.habitatSick &&
+    (health.activityState === 'happy' ||
+      health.activityState === 'content' ||
+      health.activityState === 'lonely');
+  const nextStateCopy = habitatOnlySickness
+    ? `Medicine restarts the ${HABITAT_SICK_AFTER_DAYS}-day habitat timer`
+    : lifecycleMeta.next;
+  const sicknessCause =
+    health.state === 'sick'
+      ? health.habitatSick && health.activityState === 'sick'
+        ? 'Inactivity + habitat'
+        : health.habitatSick
+          ? 'Habitat incomplete'
+          : 'Kind 1 inactivity'
+      : '';
+  const habitatLabel = hasLinkDomain()
+    ? `<button class="habitat-source-link" type="button" data-action="habitat-source"
+        title="Open Gigi’s Profile Health project">Habitat</button>`
+    : 'Habitat';
   const petStage = readOnly
     ? `<div class="pet-stage pet-stage--readonly">${petMarkup(shownState, appearance, condition.label)}</div>`
     : `<button class="pet-stage" data-action="pet-menu" aria-label="Open pet actions">${petMarkup(shownState, appearance, condition.label)}</button>`;
@@ -1517,19 +1634,22 @@ function petHomeMarkup(): string {
             .join('')}
         </div>
         <div class="next-state">
-          <span>${escapeHtml(lifecycleMeta.next)}</span>
+          <span>${escapeHtml(nextStateCopy)}</span>
           ${readOnly ? '' : '<button class="text-button" data-action="preview">Preview states</button>'}
         </div>
 
         ${careActions}
 
         <dl class="pet-facts">
-          <div><dt>Activity state</dt><dd>${escapeHtml(STATE_META[health.state].label)}</dd></div>
+          <div><dt>Activity state</dt><dd>${escapeHtml(STATE_META[health.activityState].label)}</dd></div>
+          ${sicknessCause
+            ? `<div><dt>Sickness cause</dt><dd>${escapeHtml(sicknessCause)}</dd></div>`
+            : ''}
           <div><dt>Born</dt><dd>${formatDate(activeBirth.event.created_at)}</dd></div>
           <div><dt>Age</dt><dd>${ageDays} ${ageDays === 1 ? 'day' : 'days'}</dd></div>
           <div><dt>Last care</dt><dd>${formatRelative(health.lastCareAt)}</dd></div>
           <div>
-            <dt>Habitat</dt>
+            <dt>${habitatLabel}</dt>
             <dd>
               <button class="text-button habitat-link" data-action="profile">
                 ${profileHealth.score}/${profileHealth.max} · ${escapeHtml(profileTierLabel(profileHealth.tier))}
@@ -1697,6 +1817,12 @@ function profileModalMarkup(): string {
         </li>`,
     )
     .join('');
+  const habitatTimer =
+    health && profileHealth.tier === 'incomplete'
+      ? health.habitatSick
+        ? `The incomplete habitat has reached ${HABITAT_SICK_AFTER_DAYS} days and is now a sickness cause.`
+        : `${Math.min(health.habitatDaysIncomplete, HABITAT_SICK_AFTER_DAYS)}/${HABITAT_SICK_AFTER_DAYS} days toward habitat sickness.`
+      : 'The habitat is above the incomplete tier, so this sickness timer is not active.';
 
   return modalFrame(
     'Nostr habitat',
@@ -1709,9 +1835,11 @@ function profileModalMarkup(): string {
         </div>
       </div>
       <p class="modal-copy">
-        This score enriches a living pet’s condition. Activity alone controls sickness,
-        recovery, and irreversible death.
+        This score enriches a living pet’s condition. Activity alone controls critical
+        decline and irreversible death. An incomplete habitat becomes a separate sickness
+        cause after ${HABITAT_SICK_AFTER_DAYS} days; medicine restarts that timer.
       </p>
+      <p class="modal-copy"><strong>${escapeHtml(habitatTimer)}</strong></p>
       ${
         checks
           ? `<ul class="profile-checks">${checks}</ul>`
@@ -1885,6 +2013,8 @@ function bindInteractions(): void {
       } else if (action === 'profile') {
         modal = 'profile';
         render();
+      } else if (action === 'habitat-source') {
+        void openHabitatSource();
       } else if (action === 'clear-preview') {
         previewState = null;
         void rememberPreview(null);

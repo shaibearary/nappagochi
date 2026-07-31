@@ -18,6 +18,7 @@
     "test:demo-seed": "node --test scripts/seed-demo-relay.test.mjs",
     "test:view-mode": "node --test scripts/view-mode.test.mjs",
     "test:activity": "node --test scripts/activity-reconciliation.test.mjs",
+    "test:habitat": "node --test scripts/habitat-sickness.test.mjs",
     "test:event-routing": "node --test scripts/event-routing.test.mjs",
     "test:paja-debug": "node --test scripts/paja-nsec-debug-patch.test.mjs",
     "test:relay-copy": "node --test scripts/copy-events-to-local-relay.test.mjs",

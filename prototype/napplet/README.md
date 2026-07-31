@@ -28,6 +28,11 @@ The 2026-07-31 hosted publish-routing fix is documented in
   media hosting, Lightning, relays, follows, and NIP-60 wallet events.
 - Combines habitat health with activity into Radiant, Thriving, Unsettled, and
   Fragile living-condition variants.
+- Makes 14 continuous days in the Incomplete habitat tier a second Sick trigger.
+  Habitat alone cannot cause Critical or Dead, and verified medicine restarts
+  its grace period.
+- Opens the credited Gigi Profile Health source through optional NAP-LINK when
+  the user clicks the **Habitat** label.
 - Reconciles live kind `1` events and shows partial-sync status.
 - Supports optional shell theme and storage domains with safe fallbacks.
 - Supports documented, opt-in local-only and local-mirror debug modes without
@@ -118,8 +123,8 @@ relays.
 ## Napplet boundaries
 
 - Required domains: `identity`, `outbox`.
-- Optional domains: `resource`, `storage`, `theme`, plus temporary debug-only
-  `config` and `relay` support.
+- Optional domains: `resource`, `storage`, `theme`, `link`, plus temporary
+  debug-only `config` and `relay` support.
 - No direct network, signer, relay pool, key, or browser persistence access.
 - Normal social reads and publishes are OUTBOX-first.
 - Hosted mode does not force a loopback relay into shell requests. The local

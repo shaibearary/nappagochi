@@ -71,8 +71,9 @@ relays. See [Hybrid relay policy](docs/16-hybrid-relay-policy.md).
   sick or critical pet.
 - Prolonged inactivity makes the pet lonely, sick, critical, and finally dead.
 - Death is terminal for that pet. The owner may create a new pet afterward.
-- An eight-check Nostr profile-health score enriches the pet's habitat and
-  visible condition without controlling sickness, death, or recovery.
+- An eight-check Nostr profile-health score enriches the pet's habitat. Staying
+  in the Incomplete tier for 14 days can cause Sick, while activity alone
+  controls Critical and terminal death.
 - Appearance is customizable without rewriting the pet's birth history.
 
 ## Protocol recommendation

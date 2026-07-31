@@ -748,6 +748,22 @@ select:focus-visible {
   font-size: 13px;
 }
 
+.habitat-source-link {
+  border: 0;
+  padding: 0;
+  color: inherit;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
+
+.habitat-source-link:hover {
+  color: var(--shell-primary);
+}
+
 .pet-facts dd {
   margin: 0;
   font-size: 13px;
