@@ -893,8 +893,10 @@ function beginLiveSubscription(): void {
   liveSubscription = subscription;
 }
 
-async function refreshDerivedState(): Promise<void> {
-  verifiedMedicineIds = await verifyMedicineEvents(notes);
+async function refreshDerivedState(reverifyMedicine = true): Promise<void> {
+  if (reverifyMedicine) {
+    verifiedMedicineIds = await verifyMedicineEvents(notes);
+  }
   activeBirth = resolveLineage();
   if (activeBirth) {
     health = reduceHealth(activeBirth, nowSeconds());
@@ -2051,7 +2053,9 @@ async function handleNote(form: HTMLFormElement): Promise<void> {
     const fedPet = Boolean(health?.canFeed);
     notes = mergeEventHistory(notes, [published]);
     modal = null;
-    await refreshDerivedState();
+    // A top-level feed cannot add medicine, so keep the verified set from the
+    // initial sync instead of repeating parent-note lookups for old replies.
+    await refreshDerivedState(false);
     const relayCount = acceptedRelayCount(result);
     const localAccepted = Boolean(
       eventRouting.localRelayUrl &&

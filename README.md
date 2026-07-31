@@ -103,6 +103,7 @@ limitations are in [docs/02-nostr-protocol-design.md](docs/02-nostr-protocol-des
 16. [Hybrid relay policy](docs/16-hybrid-relay-policy.md)
 17. [Local demo accounts and npub viewer](docs/17-local-demo-view-mode.md)
 18. [Public napplet deployment](docs/18-public-napplet-deployment.md)
+19. [Hosted publish-routing fix](docs/19-hosted-publish-fix.md)
 
 ## Decisions already made for the plan
 

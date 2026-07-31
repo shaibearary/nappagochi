@@ -12,6 +12,8 @@ The public pointer is a kind `35129` named manifest with d-tag `nostr-pet`.
 Release identity, relays, Blossom mirrors, hashes, verification results, and the
 update procedure are in
 [`docs/18-public-napplet-deployment.md`](../../docs/18-public-napplet-deployment.md).
+The 2026-07-31 hosted publish-routing fix is documented in
+[`docs/19-hosted-publish-fix.md`](../../docs/19-hosted-publish-fix.md).
 
 ## What works
 
@@ -28,8 +30,8 @@ update procedure are in
   Fragile living-condition variants.
 - Reconciles live kind `1` events and shows partial-sync status.
 - Supports optional shell theme and storage domains with safe fallbacks.
-- Supports a documented, temporary local-relay-only debug mode without exposing
-  private keys to the napplet.
+- Supports documented, opt-in local-only and local-mirror debug modes without
+  exposing private keys to the napplet.
 - Includes a visual-state lab that never changes canonical Nostr state.
 
 ## Run checks
@@ -120,6 +122,8 @@ relays.
   `config` and `relay` support.
 - No direct network, signer, relay pool, key, or browser persistence access.
 - Normal social reads and publishes are OUTBOX-first.
+- Hosted mode does not force a loopback relay into shell requests. The local
+  mirror is enabled only by an explicit debug-shell config value.
 - When NIP-65 is absent, publishes pass writable Identity candidates back
   through Outbox. The four disclosed prototype defaults are used only when the
   shell provides no writable candidate; the napplet never opens relay

@@ -84,21 +84,24 @@ function withLocalRelayHint<T extends { relays?: string[] }>(
 }
 
 export function eventRoutingFromConfig(values: Record<string, unknown>): EventRouting {
+  const localRelayOnly = values.nostrPetLocalRelayOnly === true;
+  const localRelayMirror = values.nostrPetLocalRelayMirror === true;
+  if (!localRelayOnly && !localRelayMirror) {
+    return { localRelayOnly: false, localRelayMirror: false, localRelayUrl: '' };
+  }
+
   const localRelayUrl = loopbackRelayUrl(
     values.nostrPetLocalRelayUrl ?? DEFAULT_LOCAL_RELAY_URL,
   );
   if (!localRelayUrl) {
     return { localRelayOnly: false, localRelayMirror: false, localRelayUrl: '' };
   }
-  if (values.nostrPetLocalRelayOnly === true) {
+  if (localRelayOnly) {
     return {
       localRelayOnly: true,
       localRelayMirror: false,
       localRelayUrl,
     };
-  }
-  if (values.nostrPetLocalRelayMirror === false) {
-    return { localRelayOnly: false, localRelayMirror: false, localRelayUrl: '' };
   }
   return {
     localRelayOnly: false,

@@ -29,6 +29,13 @@ export default defineConfig({
               'DEBUG ONLY: bypass NIP-65 discovery and use Paja’s configured loopback relay.',
             default: false,
           },
+          nostrPetLocalRelayMirror: {
+            type: 'boolean',
+            title: 'Local relay mirror (debug)',
+            description:
+              'DEBUG ONLY: add the configured loopback relay to normal Outbox reads and publishes.',
+            default: false,
+          },
           nostrPetLocalRelayUrl: {
             type: 'string',
             title: 'Local relay URL (debug)',

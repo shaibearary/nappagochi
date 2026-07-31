@@ -19,6 +19,11 @@ const HYBRID = {
   localRelayMirror: true,
   localRelayUrl: DEFAULT_LOCAL_RELAY_URL,
 };
+const NORMAL = {
+  localRelayOnly: false,
+  localRelayMirror: false,
+  localRelayUrl: '',
+};
 const FILTERS = [{ authors: ['a'.repeat(64)], kinds: [78] }];
 const TEMPLATE = {
   kind: 78,
@@ -27,15 +32,18 @@ const TEMPLATE = {
   created_at: 1_800_000_000,
 };
 
-test('defaults to a loopback mirror and keeps local-only as an explicit override', () => {
-  assert.deepEqual(eventRoutingFromConfig({}), HYBRID);
+test('defaults to normal shell routing and enables local modes only when explicit', () => {
+  assert.deepEqual(
+    eventRoutingFromConfig({}),
+    NORMAL,
+  );
   assert.deepEqual(
     eventRoutingFromConfig({ nostrPetLocalRelayOnly: true }),
     LOCAL,
   );
   assert.deepEqual(
-    eventRoutingFromConfig({ nostrPetLocalRelayMirror: false }),
-    { localRelayOnly: false, localRelayMirror: false, localRelayUrl: '' },
+    eventRoutingFromConfig({ nostrPetLocalRelayMirror: true }),
+    HYBRID,
   );
   assert.deepEqual(
     eventRoutingFromConfig({
@@ -44,6 +52,37 @@ test('defaults to a loopback mirror and keeps local-only as an explicit override
     }),
     { localRelayOnly: false, localRelayMirror: false, localRelayUrl: '' },
   );
+});
+
+test('hosted mode leaves the primary publish to the shell and keeps loopback out of fallback', async () => {
+  const calls = [];
+  const unavailable = { ok: false, error: 'relay list unavailable' };
+  const accepted = { ok: true, event: { id: 'public-event' } };
+  const result = await publishEventWithRouting(
+    NORMAL,
+    async (template, options) => {
+      calls.push({ template, options });
+      return calls.length === 1 ? unavailable : accepted;
+    },
+    TEMPLATE,
+    {},
+    ['wss://public.example'],
+    false,
+  );
+  assert.equal(result, accepted);
+  assert.deepEqual(calls, [
+    {
+      template: TEMPLATE,
+      options: {},
+    },
+    {
+      template: TEMPLATE,
+      options: {
+        relays: ['wss://public.example'],
+        toOutbox: false,
+      },
+    },
+  ]);
 });
 
 test('uses only the local hint alongside NIP-65 discovery when a relay list exists', () => {
