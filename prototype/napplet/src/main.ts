@@ -139,6 +139,7 @@ type Modal =
   | 'settings'
   | 'preview'
   | 'profile'
+  | 'habitat-source'
   | 'viewer'
   | null;
 type ProfileCheckStatus = 'pass' | 'warn' | 'fail';
@@ -238,13 +239,13 @@ const STATE_META: Record<
   sick: {
     label: 'Sick',
     face: '×',
-    note: 'A normal post is no longer enough. Reply to someone to help.',
+    note: 'A normal post is no longer enough. Save your pet with medicine.',
     next: 'Critical after 30 quiet days',
   },
   critical: {
     label: 'Critical',
     face: '—',
-    note: 'Time matters. A thoughtful reply can still save your pet.',
+    note: 'Time matters. A thoughtful message can still save your pet.',
     next: 'Dies after 45 quiet days',
   },
   dead: {
@@ -452,12 +453,19 @@ function hasLinkDomain(): boolean {
 }
 
 async function openHabitatSource(): Promise<void> {
-  if (!hasLinkDomain()) return;
+  if (!hasLinkDomain()) {
+    message = 'This shell cannot open links. Use the project address shown here.';
+    render();
+    return;
+  }
   try {
     const result = await link.open(GIGI_PROFILE_HEALTH_URL, {
       label: "Open Gigi's Profile Health project",
     });
-    if (result.status !== 'opened') {
+    if (result.status === 'opened') {
+      message = 'Link sent to Paja. If no tab opened, use the project address shown here.';
+      render();
+    } else {
       message = 'The shell did not open the Habitat source.';
       render();
     }
@@ -1577,10 +1585,8 @@ function petHomeMarkup(): string {
           ? 'Habitat incomplete'
           : 'Kind 1 inactivity'
       : '';
-  const habitatLabel = hasLinkDomain()
-    ? `<button class="habitat-source-link" type="button" data-action="habitat-source"
-        title="Open Gigi’s Profile Health project">Habitat</button>`
-    : 'Habitat';
+  const habitatLabel = `<button class="habitat-source-link" type="button" data-action="habitat-source"
+    title="View Gigi’s Profile Health source">Habitat</button>`;
   const petStage = readOnly
     ? `<div class="pet-stage pet-stage--readonly">${petMarkup(shownState, appearance, condition.label)}</div>`
     : `<button class="pet-stage" data-action="pet-menu" aria-label="Open pet actions">${petMarkup(shownState, appearance, condition.label)}</button>`;
@@ -1596,7 +1602,7 @@ function petHomeMarkup(): string {
         </button>
         <button class="care-button care-button--doctor" data-action="doctor"
           ${health.state === 'dead' ? 'disabled' : ''}>
-          <span>＋</span><strong>Visit doctor</strong><small>Reply to someone</small>
+          <span>＋</span><strong>SAVE YOUR PET</strong><small>Get medicine</small>
         </button>
       </div>`;
 
@@ -1707,23 +1713,23 @@ function doctorModalMarkup(): string {
     .join('');
 
   return modalFrame(
-    'Visit the doctor',
+    `Help ${activeBirth?.data.name ?? 'your pet'} recover`,
     doctorLoading
-      ? '<div class="doctor-loading">Finding recent notes for a helpful reply…</div>'
+      ? '<div class="doctor-loading">Finding recent notes…</div>'
       : doctorCandidates.length
         ? `
-          <p class="modal-copy">Choose a real note and write a real reply. Publishing it creates verified medicine.</p>
+          <p class="modal-copy">Choose a note and add something thoughtful！</p>
           <p class="modal-copy">${sourceCopy}</p>
           <form id="doctor-form">
             <fieldset class="note-choices">
               <legend>${doctorSource === 'follows' ? 'From your follows' : 'Discover notes'}</legend>
               ${candidates}
             </fieldset>
-            <label>Your reply
+            <label>Your message
               <textarea name="content" maxlength="1000" rows="4" placeholder="Add something thoughtful…" required></textarea>
             </label>
             <button class="primary-button" type="button" data-submit="doctor" ${actionBusy ? 'disabled' : ''}>
-              ${actionBusy ? 'Publishing reply…' : 'Reply and give medicine'}
+              ${actionBusy ? 'Publishing…' : 'Publish and give medicine'}
             </button>
           </form>`
         : `
@@ -1732,6 +1738,26 @@ function doctorModalMarkup(): string {
             <p>Try again when your shell’s outbox routes have recent public kind 1 notes.</p>
             <button class="secondary-button" data-action="reload-doctor">Try again</button>
           </div>`,
+  );
+}
+
+function habitatSourceModalMarkup(): string {
+  return modalFrame(
+    'About Habitat',
+    `
+      <p class="modal-copy">
+        The Habitat score is adapted from Gigi’s Profile Health project.
+      </p>
+      <button class="primary-button full-width" type="button" data-action="habitat-source-open">
+        Open Gigi’s project ↗
+      </button>
+      <label class="source-address">Project address
+        <input type="text" readonly value="${escapeHtml(GIGI_PROFILE_HEALTH_URL)}" />
+      </label>
+      <p class="modal-copy">
+        If Paja does not open a new tab, select and copy the project address above.
+      </p>
+    `,
   );
 }
 
@@ -1921,6 +1947,7 @@ function modalMarkup(): string {
   if (modal === 'settings') return settingsModalMarkup();
   if (modal === 'preview') return previewModalMarkup();
   if (modal === 'profile') return profileModalMarkup();
+  if (modal === 'habitat-source') return habitatSourceModalMarkup();
   if (modal === 'viewer') return viewerModalMarkup();
   return '';
 }
@@ -2014,6 +2041,11 @@ function bindInteractions(): void {
         modal = 'profile';
         render();
       } else if (action === 'habitat-source') {
+        modal = 'habitat-source';
+        message = '';
+        render();
+        void openHabitatSource();
+      } else if (action === 'habitat-source-open') {
         void openHabitatSource();
       } else if (action === 'clear-preview') {
         previewState = null;
@@ -2312,7 +2344,7 @@ async function handleDoctor(form: HTMLFormElement): Promise<void> {
   const candidate = doctorCandidates[Number(data.get('candidate'))];
   const content = String(data.get('content') ?? '').trim();
   if (!candidate || !content) {
-    message = candidate ? 'Write a reply before publishing.' : 'Choose a note to reply to.';
+    message = candidate ? 'Add something thoughtful before publishing.' : 'Choose a note first.';
     render();
     return;
   }
@@ -2341,9 +2373,9 @@ async function handleDoctor(form: HTMLFormElement): Promise<void> {
     notes = mergeEventHistory(notes, [published]);
     modal = null;
     await refreshDerivedState();
-    message = 'Reply published. The verified medicine is working.';
+    message = 'Published. The verified medicine is working.';
   } catch (error) {
-    message = error instanceof Error ? error.message : 'The reply could not be published.';
+    message = error instanceof Error ? error.message : 'Your message could not be published.';
   } finally {
     actionBusy = false;
     render();

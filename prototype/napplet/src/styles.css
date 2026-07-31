@@ -764,6 +764,15 @@ select:focus-visible {
   color: var(--shell-primary);
 }
 
+.source-address {
+  margin-top: 16px;
+}
+
+.source-address input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+}
+
 .pet-facts dd {
   margin: 0;
   font-size: 13px;

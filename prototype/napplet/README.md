@@ -32,7 +32,11 @@ The 2026-07-31 hosted publish-routing fix is documented in
   Habitat alone cannot cause Critical or Dead, and verified medicine restarts
   its grace period.
 - Opens the credited Gigi Profile Health source through optional NAP-LINK when
-  the user clicks the **Habitat** label.
+  the user clicks the **Habitat** label. Because a shell may falsely report an
+  opened tab, the source dialog also exposes the complete selectable URL.
+- Presents medicine as **SAVE YOUR PET**, then asks the owner to choose a note
+  and add something thoughtful while preserving the verified NIP-10 reply
+  underneath.
 - Reconciles live kind `1` events and shows partial-sync status.
 - Supports optional shell theme and storage domains with safe fallbacks.
 - Supports documented, opt-in local-only and local-mirror debug modes without
