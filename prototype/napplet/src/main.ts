@@ -1367,7 +1367,7 @@ function shellHeader(): string {
     <header class="topbar">
       <div class="brand">
         <span class="brand-mark" aria-hidden="true">⌁</span>
-        <span>Nostr Pet</span>
+        <span>Nappagochi</span>
         <span class="prototype-pill">prototype</span>
       </div>
       <div class="account">
@@ -1904,7 +1904,7 @@ function viewerFormMarkup(formId: string): string {
 
 function viewerModalMarkup(): string {
   return modalFrame(
-    'View another Nostr Pet',
+    'View another Nappagochi',
     `
       <p class="modal-copy">
         Paste a public <strong>npub</strong>. This changes only the account being

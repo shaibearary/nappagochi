@@ -1,4 +1,4 @@
-# Nostr Pet Napplet Guide
+# Nappagochi Napplet Guide
 
 Keep this application narrow: it renders and operates one activity-driven pet
 inside a NIP-5D shell.

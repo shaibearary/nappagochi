@@ -305,10 +305,10 @@ const server = Deno.serve(
 
     return new Response(
       JSON.stringify({
-        name: 'Nostr Pet Local Test Relay',
+        name: 'Nappagochi Local Test Relay',
         description: 'Loopback-only persistent relay for napplet development.',
         supported_nips: [1, 11, 45],
-        software: 'nostr-pet-local-test-relay',
+        software: 'nappagochi-local-test-relay',
         version: '1',
       }),
       {

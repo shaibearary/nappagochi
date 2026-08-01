@@ -106,7 +106,7 @@ async function query(relay, filter) {
 }
 
 test('stores, queries, and reloads a signed pet birth event', { timeout: 30_000 }, async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'nostr-pet-relay-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nappagochi-relay-'));
   const dataPath = join(directory, 'events.json');
   const port = await availablePort();
   const relayUrl = `ws://127.0.0.1:${port}`;

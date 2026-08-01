@@ -453,7 +453,7 @@ function parseArgs(argv) {
 }
 
 function helpText() {
-  return `Nostr Pet local fixture generator
+  return `Nappagochi local fixture generator
 
 Usage:
   node scripts/create-pet-fixtures.mjs --matrix

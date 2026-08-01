@@ -1,14 +1,16 @@
-# Nostr Pet Napplet
+# Nappagochi Napplet
 
-A portable prototype of Nostr Pet for NIP-5D-compatible shells. It demonstrates
+A portable prototype of Nappagochi for NIP-5D-compatible shells. It demonstrates
 the pet lifecycle and signed Nostr interactions; it is not yet an
 operating-system desktop overlay.
 
 ## Public release
 
-[Open Nostr Pet in Kehto's hosted Paja runtime](https://kehto.github.io/web/paja/?naddr=naddr1qvzqqqyf8ypzqte9nen2lgah6szky3hr0ympcj5v3znps9umamlzsm53fxn9ynyxqyxhwumn8ghj7mn0wvhxcmmvqy28wumn8ghj7un9d3shjtnyv9kh2uewd9hsz9nhwden5te0wfjkccte9ec8y6tdv9kzumn9wsqqjmn0wd68yttsv46qhg7xxf).
+[Open the current Nappagochi release in Kehto's hosted Paja runtime](https://kehto.github.io/web/paja/?naddr=naddr1qvzqqqyf8ypzqte9nen2lgah6szky3hr0ympcj5v3znps9umamlzsm53fxn9ynyxqyxhwumn8ghj7mn0wvhxcmmvqy28wumn8ghj7un9d3shjtnyv9kh2uewd9hsz9nhwden5te0wfjkccte9ec8y6tdv9kzumn9wsqqjmn0wd68yttsv46qhg7xxf).
 
 The public pointer is a kind `35129` named manifest with d-tag `nostr-pet`.
+Nappagochi keeps that manifest identity and all pet event metadata unchanged so
+existing pets continue to load.
 
 ## What works
 

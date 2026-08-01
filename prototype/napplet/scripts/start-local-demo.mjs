@@ -140,7 +140,7 @@ async function main() {
   try {
     for (const service of SERVICES) await startService(service);
     console.log('');
-    console.log('Nostr Pet local demo is ready: http://127.0.0.1:5197/');
+    console.log('Nappagochi local demo is ready: http://127.0.0.1:5197/');
     console.log('Keep this command running. Press Ctrl+C once to stop all services.');
     await done;
   } catch (error) {

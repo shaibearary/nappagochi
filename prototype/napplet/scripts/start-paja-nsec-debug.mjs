@@ -130,7 +130,7 @@ async function main() {
   process.once('SIGINT', close);
   process.once('SIGTERM', close);
 
-  console.log(`Nostr Pet test Paja: http://${args.host}:${args.port}/`);
+  console.log(`Nappagochi test Paja: http://${args.host}:${args.port}/`);
   console.log(`Napplet target: ${args.targetUrl}`);
   console.log(`Local relay only: ${args.relayUrl}`);
   console.log('The Test nsec field is in Paja’s Signer panel and is memory-only.');

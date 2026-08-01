@@ -175,7 +175,7 @@ function parseOptions(argv) {
 }
 
 function helpText() {
-  return `Seed the persistent local relay with a Nostr Pet demo matrix
+  return `Seed the persistent local relay with a Nappagochi demo matrix
 
 Usage:
   node scripts/seed-demo-relay.mjs

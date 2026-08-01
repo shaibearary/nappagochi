@@ -1,4 +1,4 @@
-# Nostr Pet
+# Nappagochi
 
 Product plan and working napplet prototype for a pet whose life reflects its
 owner's public Nostr activity.
@@ -9,7 +9,7 @@ Status: **napplet published; native desktop shell not started**.
 
 The implementation is in [`prototype/napplet`](prototype/napplet/README.md).
 
-[Open the public Nostr Pet napplet in Kehto Paja](https://kehto.github.io/web/paja/?naddr=naddr1qvzqqqyf8ypzqte9nen2lgah6szky3hr0ympcj5v3znps9umamlzsm53fxn9ynyxqyxhwumn8ghj7mn0wvhxcmmvqy28wumn8ghj7un9d3shjtnyv9kh2uewd9hsz9nhwden5te0wfjkccte9ec8y6tdv9kzumn9wsqqjmn0wd68yttsv46qhg7xxf).
+[Open the current Nappagochi napplet release in Kehto Paja](https://kehto.github.io/web/paja/?naddr=naddr1qvzqqqyf8ypzqte9nen2lgah6szky3hr0ympcj5v3znps9umamlzsm53fxn9ynyxqyxhwumn8ghj7mn0wvhxcmmvqy28wumn8ghj7un9d3shjtnyv9kh2uewd9hsz9nhwden5te0wfjkccte9ec8y6tdv9kzumn9wsqqjmn0wd68yttsv46qhg7xxf).
 
 ```bash
 cd prototype/napplet
@@ -76,7 +76,7 @@ appearance/preferences. Do not invent a new event kind for the MVP.
 
 ## Decisions already made for the plan
 
-- Working product name: **Nostr Pet**.
+- Product name: **Nappagochi**.
 - Desktop shell candidate: Tauri 2, subject to an early transparent-window
   prototype.
 - Primary desktop signer: NIP-46 remote signing. The app never asks for or
