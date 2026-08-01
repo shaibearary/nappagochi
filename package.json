@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --host 127.0.0.1 --port 5188 --strictPort",
+    "dev": "node scripts/start-outbox-dev.mjs",
+    "dev:vite": "vite --host 127.0.0.1 --port 5188 --strictPort",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "type-check": "tsc --noEmit",
@@ -27,6 +28,7 @@
     "relay:local": "deno run --allow-net=127.0.0.1:7777 --allow-read=.pet-test/local-relay --allow-write=.pet-test/local-relay scripts/local-test-relay.ts --port 7777 --data .pet-test/local-relay/events.json",
     "demo:seed": "node scripts/seed-demo-relay.mjs",
     "demo:local": "node scripts/start-local-demo.mjs",
+    "paja:outbox": "node scripts/start-paja-outbox.mjs",
     "paja:debug": "node scripts/start-paja-nsec-debug.mjs",
     "paja:hybrid": "kehto paja --target-url http://127.0.0.1:5188/ --identity-mode anonymous --relay-mode live --relay-url ws://127.0.0.1:7777 --relay-url wss://nos.lol --relay-url wss://relay.damus.io --relay-url wss://relay.primal.net --relay-url wss://relay.snort.social --storage-mode memory --config-value nostrPetLocalRelayMirror=true --port 5197",
     "relay:copy": "node scripts/copy-events-to-local-relay.mjs",
