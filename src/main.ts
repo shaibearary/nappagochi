@@ -269,7 +269,6 @@ if (!app) throw new Error('Missing app root');
 let connectedPubkey = '';
 let viewedPubkey = '';
 let pubkey = '';
-let accountName = '';
 let accountFollows: string[] = [];
 let births: Birth[] = [];
 let notes: NostrEvent[] = [];
@@ -1119,7 +1118,6 @@ async function load(): Promise<void> {
     if (viewedPubkey && viewedPubkey === connectedPubkey) viewedPubkey = '';
     pubkey = viewedPubkey || connectedPubkey;
     if (!pubkey) {
-      accountName = '';
       accountFollows = [];
       births = [];
       notes = [];
@@ -1206,7 +1204,6 @@ async function load(): Promise<void> {
       currentRelays,
       profileEvents,
     );
-    accountName = profileLabel(currentProfile);
     incompleteSync = Boolean(
       profileHealthResult.incomplete || birthResult.incomplete || noteResult.incomplete,
     );
@@ -1227,10 +1224,6 @@ async function load(): Promise<void> {
     loading = false;
     render();
   }
-}
-
-function profileLabel(profile: ProfileData | null): string {
-  return profile?.displayName?.trim() || profile?.name?.trim() || 'Nostr account';
 }
 
 function uniqueRelayUrls(values: string[]): string[] {
@@ -1347,48 +1340,6 @@ function petMarkup(
   `;
 }
 
-function shellHeader(): string {
-  const accountNpub = publicNpub(pubkey);
-  const hybridTitle =
-    relayPlanSource === 'nip65'
-      ? 'Hybrid mode: NIP-65 author relays plus the local persistence mirror'
-      : relayPlanSource === 'fallback'
-        ? 'Hybrid mode: no NIP-65 relay list was resolved, so reads and publishes use local plus public fallback relays'
-        : 'Hybrid mode: resolving NIP-65, with local plus public fallback coverage';
-  const relayModePill = eventRouting.localRelayOnly
-    ? '<span class="local-relay-pill" title="Debug mode: reads and publishes use only the configured loopback relay">local only</span>'
-    : eventRouting.localRelayMirror
-      ? `<span class="hybrid-relay-pill" title="${escapeHtml(hybridTitle)}">hybrid</span>`
-      : '';
-  const viewerPill = isViewingAnotherPet()
-    ? '<span class="viewer-pill">viewing</span>'
-    : '';
-  return `
-    <header class="topbar">
-      <div class="brand">
-        <span class="brand-mark" aria-hidden="true">⌁</span>
-        <span>Nappagochi</span>
-        <span class="prototype-pill">prototype</span>
-      </div>
-      <div class="account">
-        ${relayModePill}
-        ${viewerPill}
-        ${incompleteSync ? '<span class="sync-pill" title="Some relay results were incomplete">partial sync</span>' : ''}
-        ${
-          pubkey
-            ? `<span class="account-identity">
-                <span class="account-name">${escapeHtml(accountName || 'Nostr account')}</span>
-                <span class="account-npub" title="${escapeHtml(accountNpub)}">${escapeHtml(accountNpub)}</span>
-              </span>`
-            : '<span class="account-name">signed out</span>'
-        }
-        <button class="view-mode-button" type="button" data-action="view-pet">View pet</button>
-        <span class="account-dot ${isViewingAnotherPet() ? 'account-dot--viewing' : ''}" aria-hidden="true"></span>
-      </div>
-    </header>
-  `;
-}
-
 function viewingBannerMarkup(): string {
   if (!isViewingAnotherPet()) return '';
   return `
@@ -1417,7 +1368,6 @@ function loadingMarkup(): string {
       ? 'If NIP-65 is unavailable, the shell also checks the local and public fallback relays.'
       : 'Birth, activity, and appearance events are being reconciled.';
   return `
-    ${shellHeader()}
     <section class="loading-card">
       <div class="loading-orbit" aria-hidden="true"><span></span></div>
       <p>${loadingLabel}</p>
@@ -1428,7 +1378,6 @@ function loadingMarkup(): string {
 
 function signedOutMarkup(): string {
   return `
-    ${shellHeader()}
     <section class="welcome-card">
       <div class="mini-pet">${petMarkup('content', DEFAULT_APPEARANCE)}</div>
       <p class="eyebrow">Tied to your Nostr posts</p>
@@ -1460,7 +1409,6 @@ function signedOutMarkup(): string {
 function adoptionMarkup(previous?: Birth): string {
   const isSuccessor = Boolean(previous);
   return `
-    ${shellHeader()}
     <section class="adoption-layout">
       <div class="adoption-art">
         ${petMarkup('happy', DEFAULT_APPEARANCE)}
@@ -1502,6 +1450,9 @@ function adoptionMarkup(previous?: Birth): string {
         <button class="primary-button" type="button" data-submit="adopt" ${actionBusy ? 'disabled' : ''}>
           ${actionBusy ? 'Creating signed event…' : 'Adopt this pet'}
         </button>
+        <button class="secondary-button" type="button" data-action="view-pet">
+          View another pet
+        </button>
         <small>
           You will approve a kind 78 event in your Nostr host. Paja chooses relays
           first; fallbacks are tried only when its relay list is unavailable.
@@ -1513,7 +1464,6 @@ function adoptionMarkup(previous?: Birth): string {
 
 function viewedEmptyMarkup(): string {
   return `
-    ${shellHeader()}
     ${viewingBannerMarkup()}
     <section class="adoption-layout viewed-empty-layout">
       <div class="adoption-art">
@@ -1603,10 +1553,12 @@ function petHomeMarkup(): string {
           ${health.state === 'dead' ? 'disabled' : ''}>
           <span>＋</span><strong>SAVE YOUR PET</strong><small>Get medicine</small>
         </button>
-      </div>`;
+      </div>
+      <button class="secondary-button view-another-button" type="button" data-action="view-pet">
+        View another pet
+      </button>`;
 
   return `
-    ${shellHeader()}
     ${viewingBannerMarkup()}
     <section class="pet-layout">
       <div class="habitat">
