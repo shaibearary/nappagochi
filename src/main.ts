@@ -45,6 +45,7 @@ import {
   reduceHabitatSickness,
 } from './habitat-sickness';
 import { isReadOnlyView, parseViewerNpub } from './view-mode';
+import { petPoseStyle, resolvePetPose } from './pet-emotion';
 import './styles.css';
 
 declare global {
@@ -1326,9 +1327,10 @@ function petMarkup(
         ? '<span class="pet-accessory hat" aria-hidden="true"></span>'
         : '';
   const eye = petAppearance.eyes === 'sleepy' ? '⌒' : petAppearance.eyes === 'sparkle' ? '✦' : '●';
+  const poseStyle = petPoseStyle(resolvePetPose({ condition: state }));
 
   return `
-    <div class="pet pet--${state} palette--${petAppearance.palette}" role="img"
+    <div class="pet pet--${state} palette--${petAppearance.palette}" style="${poseStyle}" role="img"
       aria-label="${escapeHtml(conditionLabel)} Nostr pet">
       <span class="pet-shadow"></span>
       <span class="pet-ear pet-ear--left"></span>
