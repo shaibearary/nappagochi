@@ -18,6 +18,18 @@ and profile health.
   [Gigi's Profile Health project](https://github.com/dergigi/napplet-workshop/tree/master/profile-health),
   adds a second Sick trigger after 14 continuous Incomplete days.
 
+## Live reactions
+
+While it is open in a compatible NIP-5D shell, Nappagochi listens for new
+owner activity and incoming zap receipts through NAP-OUTBOX. A new kind `1`
+note or reply prompts an immediate pet reaction and then refreshes the
+canonical Nostr-derived condition. A validated zap receipt addressed to the
+owner triggers a special celebration and a short thank-you that can include
+the zap amount and sender.
+
+These live reactions are visual feedback only: they never override the pet's
+authoritative lifecycle or health state.
+
 ## Run locally
 
 ```bash
