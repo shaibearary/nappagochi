@@ -24,6 +24,9 @@ importers:
       nostr-tools:
         specifier: 2.23.5
         version: 2.23.5(typescript@5.9.3)
+      playwright:
+        specifier: 1.61.0
+        version: 1.61.0
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
