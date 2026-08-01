@@ -516,6 +516,12 @@ select:focus-visible {
   opacity: 0.42;
 }
 
+.pet[data-reaction='zap-celebrate'] .pet-signal {
+  color: #f4a900;
+  background: color-mix(in srgb, #ffd85a 24%, var(--paper));
+  animation: zap-signal 420ms ease-in-out infinite alternate;
+}
+
 .state-caption {
   max-width: 520px;
   margin-top: 16px;
@@ -1473,6 +1479,22 @@ form > small {
   70%,
   100% {
     box-shadow: 0 0 0 14px transparent;
+  }
+}
+
+@keyframes zap-signal {
+  from {
+    box-shadow:
+      0 0 0 0 color-mix(in srgb, #ffd85a 55%, transparent),
+      0 9px 24px color-mix(in srgb, var(--shell-text) 10%, transparent);
+    transform: rotate(-8deg) scale(1);
+  }
+
+  to {
+    box-shadow:
+      0 0 0 13px transparent,
+      0 0 24px color-mix(in srgb, #f4a900 55%, transparent);
+    transform: rotate(8deg) scale(1.16);
   }
 }
 

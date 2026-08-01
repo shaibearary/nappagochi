@@ -17,7 +17,6 @@ import {
   type OutboxQueryOptions,
   type OutboxRelayPlan,
   type OutboxResult,
-  type OutboxSubscription,
   type ProfileData,
   type RelayEventResult,
   type Subscription,
@@ -45,7 +44,24 @@ import {
   reduceHabitatSickness,
 } from './habitat-sickness';
 import { isReadOnlyView, parseViewerNpub } from './view-mode';
-import { petPoseStyle, resolvePetPose } from './pet-emotion';
+import {
+  PetEmotionController,
+  petPoseStyle,
+  resolvePetPose,
+  type PetEmotionSnapshot,
+} from './pet-emotion';
+import {
+  LiveSessionManager,
+  type LiveChannelDefinition,
+  type LiveDelivery,
+  type OpenLiveChannel,
+} from './live-session';
+import {
+  classifyOwnerActivityDelivery,
+  classifyInboundDelivery,
+  LiveSignalAggregator,
+  reactionForLiveAggregate,
+} from './live-aggregation';
 import './styles.css';
 
 declare global {
@@ -129,6 +145,7 @@ const DEFAULT_PUBLISH_RELAYS = [
   'wss://relay.primal.net',
   'wss://relay.snort.social',
 ];
+const APP_MOUNTED_AT = Math.floor(Date.now() / 1000);
 
 type PetState = ActivityState;
 type Palette = 'peach' | 'mint' | 'night';
@@ -293,10 +310,18 @@ let doctorCandidates: DoctorCandidate[] = [];
 let doctorSource: DoctorSource = null;
 let doctorLoading = false;
 let eventRouting: EventRouting = eventRoutingFromConfig({});
-let liveSubscription: OutboxSubscription | Subscription | null = null;
 let identitySubscription: Subscription | null = null;
 let themeSubscription: Subscription | null = null;
 let healthTimer: number | null = null;
+let activityRefreshTimer: number | null = null;
+let loadGeneration = 0;
+let liveSession: LiveSessionManager | null = null;
+let liveAggregator: LiveSignalAggregator | null = null;
+let emotionUnsubscribe: (() => void) | null = null;
+let reactionFrame: number | null = null;
+const emotionController = new PetEmotionController({
+  reducedMotion: () => window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+});
 
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
@@ -958,36 +983,166 @@ async function rememberPreview(value: PetState | null): Promise<void> {
   }
 }
 
-function closeLiveSubscription(): void {
-  liveSubscription?.close();
-  liveSubscription = null;
+const openLiveChannel: OpenLiveChannel = (definition, onEvent, onClosed) => {
+  if (eventRouting.localRelayOnly) {
+    return relay.subscribe(definition.filters, onEvent, () => undefined, {
+      relay: eventRouting.localRelayUrl,
+    });
+  }
+  const subscription = outbox.subscribe(definition.filters, {
+    ...(definition.authors?.length ? { authors: definition.authors } : {}),
+    ...(definition.relays?.length ? { relays: definition.relays } : {}),
+    limit: definition.limit,
+    timeoutMs: definition.timeoutMs,
+  });
+  subscription.on('event', onEvent);
+  subscription.on('closed', onClosed);
+  return subscription;
+};
+
+function closeLiveChannels(): void {
+  liveSession?.closeChannel('owner-activity');
+  liveSession?.closeChannel('inbound-engagement');
 }
 
 function beginLiveSubscription(): void {
-  closeLiveSubscription();
-  if (!pubkey || !activeBirth) return;
-  const filters = [{ authors: [pubkey], kinds: [1], since: activeBirth.event.created_at }];
-  const onEvent = (result: RelayEventResult) => {
-    if (notes.some((event) => event.id === result.event.id)) return;
-    notes.push(result.event);
-    void refreshDerivedState();
-  };
-  if (eventRouting.localRelayOnly) {
-    liveSubscription = relay.subscribe(filters, onEvent, () => undefined, {
-      relay: eventRouting.localRelayUrl,
+  closeLiveChannels();
+  if (!liveSession || !pubkey || !activeBirth) {
+    console.log('[nappagochi:live] owner activity channel not started', {
+      hasSession: Boolean(liveSession),
+      hasOwner: Boolean(pubkey),
+      hasActiveBirth: Boolean(activeBirth),
     });
     return;
   }
-  const subscription = outbox.subscribe(filters, {
+  const definition: LiveChannelDefinition = {
+    id: 'owner-activity',
+    filters: [{ authors: [pubkey], kinds: [1] }],
     authors: [pubkey],
     ...(readRelayHints.length
       ? { relays: readRelayHints }
       : {}),
     limit: 200,
     timeoutMs: 5_000,
+  };
+  liveSession.replaceChannel(definition);
+  liveSession.replaceChannel({
+    id: 'inbound-engagement',
+    // Intentionally omit kinds: this is the session feed for every event directed at the owner.
+    filters: [{ '#p': [pubkey] }],
+    ...(readRelayHints.length ? { relays: readRelayHints } : {}),
+    limit: 500,
+    timeoutMs: 5_000,
   });
-  subscription.on('event', onEvent);
-  liveSubscription = subscription;
+}
+
+function scheduleActivityProjectionRefresh(): void {
+  if (activityRefreshTimer !== null) {
+    console.log('[nappagochi:projection] activity refresh already scheduled', {
+      ownerPubkey: pubkey,
+      generation: loadGeneration,
+    });
+    return;
+  }
+  const generation = loadGeneration;
+  const owner = pubkey;
+  const birthId = activeBirth?.event.id;
+  console.log('[nappagochi:projection] activity invalidated by live signal', {
+    ownerPubkey: owner,
+    birthId,
+    generation,
+    debounceMs: 250,
+  });
+  activityRefreshTimer = window.setTimeout(() => {
+    activityRefreshTimer = null;
+    void refreshActivityProjection(generation, owner, birthId);
+  }, 250);
+}
+
+async function refreshActivityProjection(
+  generation: number,
+  owner: string,
+  birthId?: string,
+): Promise<void> {
+  if (!owner || !birthId) return;
+  console.log('[nappagochi:projection] activity history refresh started', {
+    ownerPubkey: owner,
+    birthId,
+    generation,
+  });
+  try {
+    const result = await queryPetEvents([{ authors: [owner], kinds: [1], limit: 500 }], {
+      authors: [owner],
+      limit: 500,
+      timeoutMs: 8_000,
+    });
+    if (
+      generation !== loadGeneration ||
+      owner !== pubkey ||
+      birthId !== activeBirth?.event.id
+    ) {
+      console.log('[nappagochi:projection] stale activity refresh discarded', {
+        ownerPubkey: owner,
+        birthId,
+        requestedGeneration: generation,
+        activeGeneration: loadGeneration,
+      });
+      return;
+    }
+    // Preserve already accepted local publishes if a relay query is briefly stale.
+    notes = mergeEventHistory(notes, result.events.map((item) => item.event));
+    verifiedMedicineIds = await verifyMedicineEvents(notes);
+    if (generation !== loadGeneration || owner !== pubkey) return;
+    if (activeBirth) health = reduceHealth(activeBirth, nowSeconds());
+    incompleteSync = incompleteSync || Boolean(result.incomplete);
+    console.log('[nappagochi:projection] activity history refresh applied', {
+      ownerPubkey: owner,
+      birthId,
+      generation,
+      noteCount: notes.length,
+      verifiedMedicineCount: verifiedMedicineIds.size,
+      healthState: health?.state ?? null,
+      incomplete: Boolean(result.incomplete),
+    });
+    render();
+  } catch (error) {
+    // A live hint cannot replace the last good historical projection.
+    console.log('[nappagochi:projection] activity history refresh failed; last projection retained', {
+      ownerPubkey: owner,
+      birthId,
+      generation,
+      reason: error instanceof Error ? error.message : 'unknown-error',
+    });
+  }
+}
+
+function handleLiveDelivery(delivery: LiveDelivery): void {
+  const { channelId, event, receivedAt } = delivery;
+  const signal = channelId === 'owner-activity'
+    ? event.pubkey === pubkey
+      ? classifyOwnerActivityDelivery({ event, receivedAt })
+      : null
+    : channelId === 'inbound-engagement'
+      ? classifyInboundDelivery({ event, ownerPubkey: pubkey, receivedAt })
+      : null;
+  if (!signal) {
+    console.log('[nappagochi:live] accepted delivery produced no reaction signal', {
+      channelId,
+      eventId: event.id,
+      kind: event.kind,
+    });
+    return;
+  }
+  console.log('[nappagochi:live] reaction signal classified', {
+    signalId: signal.id,
+    eventId: signal.eventId,
+    type: signal.type,
+    actorPubkey: signal.actorPubkey,
+    zapAmountSats: signal.zap?.amountSats,
+    zapSenderPubkey: signal.zap?.senderPubkey,
+  });
+  liveAggregator?.push(signal);
+  if (channelId === 'owner-activity') scheduleActivityProjectionRefresh();
 }
 
 async function refreshDerivedState(reverifyMedicine = true): Promise<void> {
@@ -1108,11 +1263,12 @@ async function setupEventRouting(): Promise<void> {
 }
 
 async function load(): Promise<void> {
+  loadGeneration += 1;
   loading = true;
   message = '';
   incompleteSync = false;
   pubkey = viewedPubkey || connectedPubkey;
-  closeLiveSubscription();
+  closeLiveChannels();
   render();
 
   try {
@@ -1994,6 +2150,50 @@ function render(): void {
       ${modalMarkup()}
     </div>`;
   bindInteractions();
+  syncEmotionRenderer();
+}
+
+function applyEmotionSnapshot(snapshot: PetEmotionSnapshot): void {
+  const pet = document.querySelector<HTMLElement>('.pet-stage .pet');
+  if (!pet) return;
+  pet.setAttribute('style', petPoseStyle(snapshot.pose));
+  if (snapshot.reaction) pet.dataset.reaction = snapshot.reaction;
+  else delete pet.dataset.reaction;
+}
+
+function syncEmotionRenderer(): void {
+  emotionUnsubscribe?.();
+  emotionUnsubscribe = null;
+  if (!activeBirth || !health) return;
+  // Preview changes only the displayed pose; authoritative health still gates reactions.
+  emotionController.setCondition(health.state);
+  if (previewState) {
+    applyEmotionSnapshot({
+      condition: previewState,
+      mood: 'neutral',
+      reaction: null,
+      pose: resolvePetPose({ condition: previewState }),
+    });
+    return;
+  }
+  emotionUnsubscribe = emotionController.subscribe(applyEmotionSnapshot);
+}
+
+function animateCurrentReaction(): void {
+  if (reactionFrame !== null) window.cancelAnimationFrame(reactionFrame);
+  const step = () => {
+    const snapshot = emotionController.snapshot();
+    applyEmotionSnapshot(snapshot);
+    if (snapshot.reaction) reactionFrame = window.requestAnimationFrame(step);
+    else {
+      reactionFrame = null;
+      console.log('[nappagochi:emotion] renderer animation loop settled', {
+        condition: snapshot.condition,
+        mood: snapshot.mood,
+      });
+    }
+  };
+  step();
 }
 
 function bindInteractions(): void {
@@ -2452,7 +2652,15 @@ async function setupTheme(): Promise<void> {
 }
 
 function cleanUp(): void {
-  closeLiveSubscription();
+  liveSession?.destroy();
+  liveSession = null;
+  liveAggregator?.destroy();
+  liveAggregator = null;
+  emotionUnsubscribe?.();
+  emotionUnsubscribe = null;
+  emotionController.destroy();
+  if (reactionFrame !== null) window.cancelAnimationFrame(reactionFrame);
+  if (activityRefreshTimer !== null) window.clearTimeout(activityRefreshTimer);
   identitySubscription?.close();
   themeSubscription?.close();
   if (healthTimer !== null) window.clearInterval(healthTimer);
@@ -2464,6 +2672,29 @@ async function start(): Promise<void> {
   if (!hasRequiredRuntime()) return;
   await setupTheme();
   await setupEventRouting();
+  liveSession = new LiveSessionManager({
+    mountedAt: APP_MOUNTED_AT,
+    openChannel: openLiveChannel,
+  });
+  liveSession.onDelivery(handleLiveDelivery);
+  liveAggregator = new LiveSignalAggregator({
+    onAggregate: (aggregate) => {
+      const reaction = reactionForLiveAggregate(aggregate);
+      const accepted = emotionController.react(reaction);
+      console.log('[nappagochi:emotion] live aggregate evaluated', {
+        reaction,
+        accepted,
+        totalSignals: aggregate.total,
+        actorCount: aggregate.actorCount,
+        byType: aggregate.byType,
+        authoritativeCondition: health?.state ?? null,
+        previewActive: Boolean(previewState),
+      });
+      if (accepted) {
+        animateCurrentReaction();
+      }
+    },
+  });
   identitySubscription = identity.onChanged(() => {
     void load();
   });

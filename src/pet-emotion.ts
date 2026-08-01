@@ -17,7 +17,8 @@ export type PetReaction =
   | 'celebrate'
   | 'startled'
   | 'receive-care'
-  | 'recover';
+  | 'recover'
+  | 'zap-celebrate';
 
 export type PetPose = {
   bodyY: number;
@@ -176,6 +177,20 @@ export const PET_REACTION_CLIPS: Readonly<Record<PetReaction, PetAnimationClip>>
     ],
     reducedMotionPose: { eyeSmile: 0.7, mouthCurve: 0.7, saturation: 1 },
   },
+  'zap-celebrate': {
+    id: 'zap-celebrate',
+    durationMs: 1250,
+    priority: 70,
+    allowedConditions: LIVING_CONDITIONS,
+    keyframes: [
+      { offset: 0, pose: {} },
+      { offset: 0.18, pose: { bodyY: -15, bodyRotation: -5, bodyScaleX: 0.92, bodyScaleY: 1.09, eyeOpen: 1.12, mouthOpen: 0.35, mouthCurve: 1 } },
+      { offset: 0.42, pose: { bodyY: -5, bodyRotation: 5, bodyScaleX: 1.06, bodyScaleY: 0.95, eyeSmile: 1, mouthOpen: 0.2, mouthCurve: 1 } },
+      { offset: 0.68, pose: { bodyY: -11, bodyRotation: -3, eyeSmile: 1, mouthCurve: 1 } },
+      { offset: 1, pose: {} },
+    ],
+    reducedMotionPose: { eyeSmile: 1, mouthOpen: 0.2, mouthCurve: 1, cheekIntensity: 1 },
+  },
 };
 
 function clamp(value: number, minimum: number, maximum: number): number {
@@ -203,7 +218,11 @@ function moodWeight(condition: PetCondition): number {
   return 1;
 }
 
-function sampleClip(clip: PetAnimationClip, progress: number): Partial<PetPose> {
+function sampleClip(
+  clip: PetAnimationClip,
+  progress: number,
+  baseline: PetPose,
+): Partial<PetPose> {
   const bounded = clamp(progress, 0, 1);
   let left = clip.keyframes[0];
   let right = clip.keyframes[clip.keyframes.length - 1];
@@ -222,8 +241,8 @@ function sampleClip(clip: PetAnimationClip, progress: number): Partial<PetPose> 
   ]);
   const sampled: Partial<PetPose> = {};
   for (const key of keys) {
-    const from = left.pose[key] ?? 0;
-    const to = right.pose[key] ?? 0;
+    const from = left.pose[key] ?? baseline[key];
+    const to = right.pose[key] ?? baseline[key];
     sampled[key] = from + (to - from) * localProgress;
   }
   return sampled;
@@ -245,7 +264,7 @@ export function resolvePetPose(input: {
     if (clip.allowedConditions.includes(input.condition)) {
       const reactionPose = input.reducedMotion
         ? clip.reducedMotionPose ?? {}
-        : sampleClip(clip, input.reactionProgress ?? 0);
+        : sampleClip(clip, input.reactionProgress ?? 0, pose);
       pose = mergePose(pose, reactionPose);
     }
   }
@@ -265,52 +284,96 @@ export class PetEmotionController {
   private readonly now: () => number;
   private readonly reducedMotion: () => boolean;
   private listeners = new Set<(snapshot: PetEmotionSnapshot) => void>();
+  private readonly log: (message: string, details?: Record<string, unknown>) => void;
 
   constructor(options?: {
     condition?: PetCondition;
     now?: () => number;
     reducedMotion?: () => boolean;
+    logger?: (message: string, details?: Record<string, unknown>) => void;
   }) {
     this.condition = options?.condition ?? 'happy';
     this.now = options?.now ?? (() => performance.now());
     this.reducedMotion = options?.reducedMotion ?? (() => false);
+    this.log = options?.logger ?? ((message, details) => console.log(message, details ?? {}));
+    this.log('[nappagochi:emotion] controller created', { condition: this.condition });
   }
 
   setCondition(condition: PetCondition): void {
+    const previous = this.condition;
     this.condition = condition;
-    if (condition === 'dead') this.activeReaction = null;
+    if (condition === 'dead' && this.activeReaction) {
+      this.log('[nappagochi:emotion] reaction cancelled by terminal condition', {
+        reaction: this.activeReaction.id,
+      });
+      this.activeReaction = null;
+    }
+    if (previous !== condition) {
+      this.log('[nappagochi:emotion] condition changed', { previous, condition });
+    }
     this.notify();
   }
 
   setMood(mood: PetMood): void {
+    const previous = this.mood;
     this.mood = mood;
+    if (previous !== mood) this.log('[nappagochi:emotion] mood changed', { previous, mood });
     this.notify();
   }
 
   react(reaction: PetReaction): boolean {
     const clip = PET_REACTION_CLIPS[reaction];
-    if (!clip.allowedConditions.includes(this.condition)) return false;
+    if (!clip.allowedConditions.includes(this.condition)) {
+      this.log('[nappagochi:emotion] reaction rejected by condition', {
+        reaction,
+        condition: this.condition,
+      });
+      return false;
+    }
     if (
       this.activeReaction &&
       PET_REACTION_CLIPS[this.activeReaction.id].priority > clip.priority &&
       !this.reactionFinished(this.activeReaction)
     ) {
+      this.log('[nappagochi:emotion] reaction rejected by priority', {
+        reaction,
+        activeReaction: this.activeReaction.id,
+        requestedPriority: clip.priority,
+        activePriority: PET_REACTION_CLIPS[this.activeReaction.id].priority,
+      });
       return false;
     }
+    const interruptedReaction = this.activeReaction?.id ?? null;
     this.activeReaction = { id: reaction, startedAt: this.now() };
+    this.log('[nappagochi:emotion] reaction started', {
+      reaction,
+      condition: this.condition,
+      durationMs: clip.durationMs,
+      priority: clip.priority,
+      interruptedReaction,
+      reducedMotion: this.reducedMotion(),
+    });
     this.notify();
     return true;
   }
 
   cancelReaction(reaction?: PetReaction): void {
     if (!reaction || this.activeReaction?.id === reaction) {
+      const cancelledReaction = this.activeReaction?.id ?? null;
       this.activeReaction = null;
+      if (cancelledReaction) {
+        this.log('[nappagochi:emotion] reaction cancelled', { reaction: cancelledReaction });
+      }
       this.notify();
     }
   }
 
   snapshot(at = this.now()): PetEmotionSnapshot {
     if (this.activeReaction && this.reactionFinished(this.activeReaction, at)) {
+      this.log('[nappagochi:emotion] reaction completed', {
+        reaction: this.activeReaction.id,
+        condition: this.condition,
+      });
       this.activeReaction = null;
     }
     const reaction = this.activeReaction?.id ?? null;
@@ -339,6 +402,10 @@ export class PetEmotionController {
   }
 
   destroy(): void {
+    this.log('[nappagochi:emotion] controller destroyed', {
+      activeReaction: this.activeReaction?.id ?? null,
+      listenerCount: this.listeners.size,
+    });
     this.activeReaction = null;
     this.listeners.clear();
   }
