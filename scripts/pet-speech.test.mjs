@@ -46,6 +46,7 @@ test('the same zap deterministically selects the same phrase', () => {
   assert.equal(first.text, second.text);
   assert.match(first.text, /1,000/);
   assert.match(first.text, /Alice/);
+  assert.equal(first.durationMs, 2_400);
 });
 
 test('speech is temporary and advances through its queue', () => {

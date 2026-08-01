@@ -2255,6 +2255,8 @@ function syncEmotionRenderer(): void {
   // Preview changes only the displayed pose; authoritative health still gates reactions.
   emotionController.setCondition(health.state);
   speechController.setCondition(health.state);
+  // Speech remains ephemeral even when preview replaces the authoritative pose.
+  speechUnsubscribe = speechController.subscribe(applySpeechSnapshot);
   if (previewState) {
     applyEmotionSnapshot({
       condition: previewState,
@@ -2265,7 +2267,6 @@ function syncEmotionRenderer(): void {
     return;
   }
   emotionUnsubscribe = emotionController.subscribe(applyEmotionSnapshot);
-  speechUnsubscribe = speechController.subscribe(applySpeechSnapshot);
 }
 
 function animateCurrentReaction(): void {

@@ -63,7 +63,7 @@ export function speechForLiveAggregate(
       id: `zap:${zap.zapRequestId}`,
       intent: 'gratitude',
       text: phrase(formatSats(zap.amountSats), actorName || 'someone'),
-      durationMs: 3_800,
+      durationMs: 2_400,
       priority: 80,
     };
   }
@@ -72,7 +72,7 @@ export function speechForLiveAggregate(
       id: `published:${aggregate.representativeSignal.eventId}`,
       intent: 'activity',
       text: aggregate.total > 1 ? 'So much activity! I feel energized!' : 'You posted! I feel energized!',
-      durationMs: 3_200,
+      durationMs: 2_200,
       priority: 40,
     };
   }
@@ -80,7 +80,7 @@ export function speechForLiveAggregate(
     id: `conversation:${aggregate.representativeSignal.eventId}`,
     intent: 'conversation',
     text: 'Making conversation? I love that!',
-    durationMs: 3_200,
+    durationMs: 2_200,
     priority: 30,
   };
 }
