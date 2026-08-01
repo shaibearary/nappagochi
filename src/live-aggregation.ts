@@ -170,7 +170,11 @@ export class LiveSignalAggregator {
       total: signals.length,
       actorCount: new Set(signals.map((signal) => signal.actorPubkey)).size,
       byType,
-      representativeSignal: signals[signals.length - 1],
+      // Preserve the zap details needed by downstream reaction and speech policy
+      // when a burst also contains later owner activity.
+      representativeSignal:
+        [...signals].reverse().find((signal) => signal.type === 'zap-received') ??
+        signals[signals.length - 1],
     };
     this.log('[nappagochi:live] aggregate emitted', {
       total: aggregate.total,

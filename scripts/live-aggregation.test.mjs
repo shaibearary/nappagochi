@@ -173,3 +173,24 @@ test('a zap wins aggregate reaction selection', () => {
   };
   assert.equal(reactionForLiveAggregate(aggregate), 'zap-celebrate');
 });
+
+test('a mixed aggregate preserves its zap as the representative signal', () => {
+  const aggregates = [];
+  const aggregator = new LiveSignalAggregator({
+    windowMs: 60_000,
+    logger: () => {},
+    onAggregate: (aggregate) => aggregates.push(aggregate),
+  });
+  aggregator.push(signal({
+    id: 'zap',
+    eventId: 'zap-event',
+    type: 'zap-received',
+    zap: { amountSats: 21, senderPubkey: 'sender', zapRequestId: 'request' },
+  }));
+  aggregator.push(signal({ id: 'note', eventId: 'note-event', receivedAt: 101 }));
+  aggregator.flush();
+
+  assert.equal(aggregates[0].representativeSignal.type, 'zap-received');
+  assert.equal(aggregates[0].representativeSignal.zap.amountSats, 21);
+  aggregator.destroy();
+});

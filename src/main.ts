@@ -1,4 +1,5 @@
 import {
+  common,
   config,
   identity,
   link,
@@ -9,6 +10,7 @@ import {
   themeGet,
   themeOnChanged,
   type EventTemplate,
+  type CommonProfileData,
   type NostrEvent,
   type NostrFilter,
   type OutboxEventOptions,
@@ -62,6 +64,12 @@ import {
   LiveSignalAggregator,
   reactionForLiveAggregate,
 } from './live-aggregation';
+import {
+  PetSpeechController,
+  speechForLiveAggregate,
+  type PetSpeechSnapshot,
+} from './pet-speech';
+import { ReactionMetadataLoader } from './reaction-enrichment';
 import './styles.css';
 
 declare global {
@@ -102,6 +110,9 @@ declare global {
       };
       link?: {
         open?: unknown;
+      };
+      common?: {
+        getProfile?: unknown;
       };
     };
   }
@@ -318,9 +329,15 @@ let loadGeneration = 0;
 let liveSession: LiveSessionManager | null = null;
 let liveAggregator: LiveSignalAggregator | null = null;
 let emotionUnsubscribe: (() => void) | null = null;
+let speechUnsubscribe: (() => void) | null = null;
 let reactionFrame: number | null = null;
+let reactionEnrichmentGeneration = 0;
 const emotionController = new PetEmotionController({
   reducedMotion: () => window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+});
+const speechController = new PetSpeechController();
+const reactionMetadataLoader = new ReactionMetadataLoader({
+  lookupProfile: lookupReactionProfile,
 });
 
 function nowSeconds(): number {
@@ -1193,6 +1210,41 @@ async function queryPetEvents(
   );
 }
 
+async function lookupReactionProfile(pubkey: string): Promise<CommonProfileData | null> {
+  if (typeof window.napplet?.common?.getProfile === 'function') {
+    try {
+      const result = await common.getProfile(pubkey);
+      console.log('[nappagochi:enrichment] NAP-COMMON profile lookup returned', {
+        actorPubkey: pubkey,
+        ok: result.ok,
+        hasProfile: Boolean(result.profile),
+      });
+      if (result.ok) return result.profile ?? null;
+      return null;
+    } catch (error) {
+      console.log('[nappagochi:enrichment] NAP-COMMON profile lookup failed', {
+        actorPubkey: pubkey,
+        reason: error instanceof Error ? error.message : 'lookup-failed',
+      });
+      return null;
+    }
+  }
+
+  console.log('[nappagochi:enrichment] using outbox kind 0 fallback', {
+    actorPubkey: pubkey,
+  });
+  const result = await outbox.query(
+    [{ authors: [pubkey], kinds: [0], limit: 1 }],
+    { authors: [pubkey], limit: 1, timeoutMs: 700 },
+  );
+  const event = result.events
+    .map((item) => item.event)
+    .filter((candidate) => candidate.kind === 0 && candidate.pubkey === pubkey)
+    .sort((left, right) => right.created_at - left.created_at)[0] ?? null;
+  const profile = profileFromEvent(event);
+  return profile ? { ...profile } : null;
+}
+
 async function getPetEvent(
   eventId: string,
   options?: OutboxEventOptions,
@@ -1264,6 +1316,8 @@ async function setupEventRouting(): Promise<void> {
 
 async function load(): Promise<void> {
   loadGeneration += 1;
+  // Any pending optional reaction context belongs to the previous pet/session.
+  reactionEnrichmentGeneration += 1;
   loading = true;
   message = '';
   incompleteSync = false;
@@ -1484,8 +1538,11 @@ function petMarkup(
         : '';
   const eye = petAppearance.eyes === 'sleepy' ? '⌒' : petAppearance.eyes === 'sparkle' ? '✦' : '●';
   const poseStyle = petPoseStyle(resolvePetPose({ condition: state }));
+  const speech = speechController.snapshot().utterance;
 
   return `
+    <span class="pet-speech${speech ? ' pet-speech--visible' : ''}" role="status"
+      aria-live="polite">${speech ? escapeHtml(speech.text) : ''}</span>
     <div class="pet pet--${state} palette--${petAppearance.palette}" style="${poseStyle}" role="img"
       aria-label="${escapeHtml(conditionLabel)} Nostr pet">
       <span class="pet-shadow"></span>
@@ -2161,12 +2218,24 @@ function applyEmotionSnapshot(snapshot: PetEmotionSnapshot): void {
   else delete pet.dataset.reaction;
 }
 
+function applySpeechSnapshot(snapshot: PetSpeechSnapshot): void {
+  const bubble = document.querySelector<HTMLElement>('.pet-stage .pet-speech');
+  if (!bubble) return;
+  bubble.textContent = snapshot.utterance?.text ?? '';
+  bubble.classList.toggle('pet-speech--visible', Boolean(snapshot.utterance));
+  if (snapshot.utterance) bubble.dataset.intent = snapshot.utterance.intent;
+  else delete bubble.dataset.intent;
+}
+
 function syncEmotionRenderer(): void {
   emotionUnsubscribe?.();
   emotionUnsubscribe = null;
+  speechUnsubscribe?.();
+  speechUnsubscribe = null;
   if (!activeBirth || !health) return;
   // Preview changes only the displayed pose; authoritative health still gates reactions.
   emotionController.setCondition(health.state);
+  speechController.setCondition(health.state);
   if (previewState) {
     applyEmotionSnapshot({
       condition: previewState,
@@ -2177,6 +2246,7 @@ function syncEmotionRenderer(): void {
     return;
   }
   emotionUnsubscribe = emotionController.subscribe(applyEmotionSnapshot);
+  speechUnsubscribe = speechController.subscribe(applySpeechSnapshot);
 }
 
 function animateCurrentReaction(): void {
@@ -2659,6 +2729,9 @@ function cleanUp(): void {
   emotionUnsubscribe?.();
   emotionUnsubscribe = null;
   emotionController.destroy();
+  speechUnsubscribe?.();
+  speechUnsubscribe = null;
+  speechController.destroy();
   if (reactionFrame !== null) window.cancelAnimationFrame(reactionFrame);
   if (activityRefreshTimer !== null) window.clearTimeout(activityRefreshTimer);
   identitySubscription?.close();
@@ -2692,6 +2765,23 @@ async function start(): Promise<void> {
       });
       if (accepted) {
         animateCurrentReaction();
+        const enrichmentGeneration = ++reactionEnrichmentGeneration;
+        const zapSender = aggregate.representativeSignal.zap?.senderPubkey;
+        void reactionMetadataLoader.enrichApprovedReaction({
+          reactionAccepted: accepted,
+          reactionId: reaction,
+          actorPubkey: zapSender,
+        }).then((actor) => {
+          if (enrichmentGeneration !== reactionEnrichmentGeneration) {
+            console.log('[nappagochi:enrichment] stale reaction metadata discarded', {
+              reaction,
+              enrichmentGeneration,
+              activeGeneration: reactionEnrichmentGeneration,
+            });
+            return;
+          }
+          speechController.say(speechForLiveAggregate(aggregate, 'gentle', actor?.name));
+        });
       }
     },
   });

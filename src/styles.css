@@ -329,6 +329,48 @@ select:focus-visible {
   animation: pet-breathe 3.2s ease-in-out infinite;
 }
 
+.pet-speech {
+  position: absolute;
+  z-index: 5;
+  right: 3%;
+  bottom: 91%;
+  width: max-content;
+  max-width: min(240px, 72vw);
+  padding: 11px 14px;
+  border: 1px solid color-mix(in srgb, var(--shell-text) 18%, transparent);
+  border-radius: 17px 17px 5px 17px;
+  color: var(--shell-text);
+  background: var(--paper-strong);
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--shell-text) 13%, transparent);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.35;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px) scale(0.96);
+  transform-origin: 100% 100%;
+  transition: opacity 160ms ease, transform 190ms ease;
+}
+
+.pet-speech::after {
+  position: absolute;
+  top: 100%;
+  right: 16px;
+  border: 7px solid transparent;
+  border-top-color: var(--paper-strong);
+  content: "";
+}
+
+.pet-speech--visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.pet-speech[data-intent='gratitude'] {
+  border-color: color-mix(in srgb, #f4a900 50%, var(--line));
+  background: color-mix(in srgb, #ffd85a 16%, var(--paper-strong));
+}
+
 .palette--mint {
   --pet-main: #83c8af;
   --pet-dark: #327c71;
