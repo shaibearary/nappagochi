@@ -1,4 +1,5 @@
 .DS_Store
+.codex/
 .env
 .env.*
 !.env.example
@@ -7,5 +8,8 @@ dist/
 target/
 coverage/
 *.log
+*.local
+.pet-test/
+.turbo/
 docs/
 .private-docs/
