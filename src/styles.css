@@ -62,47 +62,6 @@ select:focus-visible {
     var(--shell-bg);
 }
 
-.topbar {
-  position: relative;
-  z-index: 4;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 62px;
-  padding: 14px clamp(16px, 4vw, 48px);
-  border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--shell-bg) 88%, transparent);
-  backdrop-filter: blur(18px);
-}
-
-.brand,
-.account {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
-.brand {
-  font-weight: 820;
-  letter-spacing: -0.025em;
-}
-
-.brand-mark {
-  display: grid;
-  width: 29px;
-  height: 29px;
-  place-items: center;
-  border-radius: 10px;
-  color: white;
-  background: var(--shell-primary);
-  box-shadow: 0 7px 18px color-mix(in srgb, var(--shell-primary) 30%, transparent);
-}
-
-.prototype-pill,
-.sync-pill,
-.local-relay-pill,
-.hybrid-relay-pill,
-.viewer-pill,
 .preview-flag {
   padding: 4px 8px;
   border-radius: 999px;
@@ -110,91 +69,6 @@ select:focus-visible {
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-}
-
-.prototype-pill {
-  color: var(--ink-muted);
-  background: var(--paper-strong);
-  border: 1px solid var(--line);
-}
-
-.sync-pill {
-  color: #8a5c00;
-  background: #fff0bd;
-}
-
-.local-relay-pill {
-  color: #8b2f45;
-  background: #ffe0e8;
-}
-
-.hybrid-relay-pill {
-  color: #23594c;
-  background: #dff5ec;
-}
-
-.viewer-pill {
-  color: #31588a;
-  background: #dfeaff;
-}
-
-.view-mode-button {
-  min-height: 32px;
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  padding: 6px 10px;
-  color: var(--shell-primary);
-  background: var(--paper-strong);
-  font-size: 12px;
-  font-weight: 780;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.view-mode-button:hover {
-  border-color: color-mix(in srgb, var(--shell-primary) 48%, var(--line));
-}
-
-.account-name {
-  max-width: 25ch;
-  overflow: hidden;
-  color: var(--ink-muted);
-  font-size: 13px;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.account-identity {
-  display: grid;
-  min-width: 0;
-  line-height: 1.1;
-  text-align: right;
-}
-
-.account-npub {
-  max-width: min(63ch, 38vw);
-  overflow: hidden;
-  color: var(--ink-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 10px;
-  font-weight: 650;
-  letter-spacing: 0.01em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.account-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #65b77a;
-  box-shadow: 0 0 0 4px color-mix(in srgb, #65b77a 16%, transparent);
-}
-
-.account-dot--viewing {
-  background: #648ec6;
-  box-shadow: 0 0 0 4px color-mix(in srgb, #648ec6 16%, transparent);
 }
 
 .viewer-banner {
@@ -233,7 +107,7 @@ select:focus-visible {
 
 .pet-layout {
   display: grid;
-  min-height: calc(100vh - 62px);
+  min-height: 100vh;
   grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.8fr);
 }
 
@@ -658,6 +532,11 @@ select:focus-visible {
   margin: 34px 0;
 }
 
+.view-another-button {
+  width: 100%;
+  margin: -22px 0 34px;
+}
+
 .view-only-card {
   display: grid;
   gap: 7px;
@@ -823,7 +702,7 @@ select:focus-visible {
 
 .adoption-layout {
   display: grid;
-  min-height: calc(100vh - 62px);
+  min-height: 100vh;
   grid-template-columns: minmax(0, 1.05fr) minmax(330px, 0.95fr);
   align-items: center;
   gap: clamp(30px, 7vw, 100px);
@@ -977,7 +856,7 @@ form > small {
 .loading-card,
 .runtime-guard {
   display: grid;
-  min-height: calc(100vh - 62px);
+  min-height: 100vh;
   align-content: center;
   justify-items: center;
   margin: auto;
@@ -1534,27 +1413,13 @@ form > small {
 }
 
 @container (max-width: 760px) {
-  .topbar {
-    min-height: 54px;
-    padding: 11px 14px;
-  }
-
-  .prototype-pill,
-  .account-name {
-    display: none;
-  }
-
-  .account-npub {
-    max-width: 17ch;
-  }
-
   .pet-layout,
   .adoption-layout {
     grid-template-columns: 1fr;
   }
 
   .pet-layout {
-    min-height: calc(100vh - 54px);
+    min-height: 100vh;
   }
 
   .habitat {
@@ -1592,27 +1457,6 @@ form > small {
 }
 
 @container (max-width: 420px) {
-  .brand {
-    font-size: 14px;
-  }
-
-  .sync-pill {
-    display: none;
-  }
-
-  .hybrid-relay-pill,
-  .local-relay-pill,
-  .viewer-pill,
-  .account-identity,
-  .account-dot {
-    display: none;
-  }
-
-  .view-mode-button {
-    min-height: 30px;
-    padding: 5px 8px;
-  }
-
   .habitat {
     min-height: 330px;
     place-content: center;
@@ -1676,7 +1520,7 @@ form > small {
   }
 
   .adoption-layout {
-    min-height: calc(100vh - 54px);
+    min-height: 100vh;
   }
 
   .adoption-card h1 {
@@ -1685,7 +1529,7 @@ form > small {
 
   .welcome-card {
     align-content: start;
-    min-height: calc(100vh - 54px);
+    min-height: 100vh;
     padding: 22px 15px 30px;
   }
 
