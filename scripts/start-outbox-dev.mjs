@@ -10,12 +10,6 @@ const STOP_TIMEOUT_MS = 2_000;
 
 const SERVICES = [
   {
-    name: 'relay',
-    command: 'pnpm',
-    args: ['run', 'relay:local'],
-    port: 7777,
-  },
-  {
     name: 'vite',
     command: 'pnpm',
     args: ['run', 'dev:vite'],
@@ -24,7 +18,7 @@ const SERVICES = [
   {
     name: 'paja',
     command: 'pnpm',
-    args: ['run', 'paja:debug'],
+    args: ['run', 'paja:outbox'],
     port: 5197,
   },
 ];
@@ -102,7 +96,7 @@ async function shutdown(exitCode = 0) {
 async function startService(service) {
   if (await canConnect(service.port)) {
     throw new Error(
-      `${HOST}:${service.port} is already in use. Stop the old local demo before starting a new one.`,
+      `${HOST}:${service.port} is already in use. Stop the old dev server before starting a new one.`,
     );
   }
 
@@ -124,7 +118,7 @@ async function startService(service) {
     if (shuttingDown) return;
     const reason = signal ? `signal ${signal}` : `exit code ${code ?? 1}`;
     console.error(
-      `[${service.name}] Stopped unexpectedly (${reason}). Stopping the other local demo services.`,
+      `[${service.name}] Stopped unexpectedly (${reason}). Stopping the other dev services.`,
     );
     void shutdown(code === 0 ? 1 : (code ?? 1));
   });
@@ -140,7 +134,8 @@ async function main() {
   try {
     for (const service of SERVICES) await startService(service);
     console.log('');
-    console.log('Nappagochi local demo is ready: http://127.0.0.1:5197/');
+    console.log('Nappagochi Outbox dev is ready: http://127.0.0.1:5197/');
+    console.log('Using NAP-OUTBOX through Paja. No local relay override is configured.');
     console.log('Keep this command running. Press Ctrl+C once to stop all services.');
     await done;
   } catch (error) {

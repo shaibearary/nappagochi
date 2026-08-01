@@ -30,6 +30,12 @@ The production build is a single self-contained `dist/index.html`. Use Paja or
 another NIP-5D-compatible shell for an interactive preview; the Vite page alone
 does not provide the napplet runtime.
 
+To start a development environment that uses the shell-provided NAP-OUTBOX API:
+
+```bash
+pnpm dev
+```
+
 To start the local relay, Vite server, and Paja debug environment together:
 
 ```bash

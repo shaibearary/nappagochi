@@ -1,4 +1,5 @@
 import {
+  common,
   config,
   identity,
   link,
@@ -9,6 +10,7 @@ import {
   themeGet,
   themeOnChanged,
   type EventTemplate,
+  type CommonProfileData,
   type NostrEvent,
   type NostrFilter,
   type OutboxEventOptions,
@@ -17,7 +19,6 @@ import {
   type OutboxQueryOptions,
   type OutboxRelayPlan,
   type OutboxResult,
-  type OutboxSubscription,
   type ProfileData,
   type RelayEventResult,
   type Subscription,
@@ -45,6 +46,33 @@ import {
   reduceHabitatSickness,
 } from './habitat-sickness';
 import { isReadOnlyView, parseViewerNpub } from './view-mode';
+import {
+  PetEmotionController,
+  petPoseStyle,
+  resolvePetPose,
+  type PetEmotionSnapshot,
+} from './pet-emotion';
+import {
+  LiveSessionManager,
+  liveRetryDelay,
+  type LiveChannelDefinition,
+  type LiveChannelId,
+  type LiveDelivery,
+  type OpenLiveChannel,
+} from './live-session';
+import {
+  classifyOwnerActivityDelivery,
+  classifyInboundDelivery,
+  LiveSignalAggregator,
+  reactionForLiveAggregate,
+} from './live-aggregation';
+import {
+  PetSpeechController,
+  speechForLiveAggregate,
+  type PetSpeechSnapshot,
+} from './pet-speech';
+import { ReactionMetadataLoader } from './reaction-enrichment';
+import { scoreProfileChecks, type ProfileTier } from './profile-scoring';
 import './styles.css';
 
 declare global {
@@ -60,31 +88,8 @@ declare global {
       outbox?: {
         getEvent?: unknown;
         query?: unknown;
-        resolveRelays?: unknown;
         subscribe?: unknown;
         publish?: unknown;
-      };
-      relay?: {
-        query?: unknown;
-        subscribe?: unknown;
-      };
-      config?: {
-        get?: unknown;
-      };
-      storage?: {
-        getItem?: unknown;
-        setItem?: unknown;
-        removeItem?: unknown;
-      };
-      theme?: {
-        get?: unknown;
-        onChanged?: unknown;
-      };
-      resource?: {
-        bytes?: unknown;
-      };
-      link?: {
-        open?: unknown;
       };
     };
   }
@@ -128,6 +133,7 @@ const DEFAULT_PUBLISH_RELAYS = [
   'wss://relay.primal.net',
   'wss://relay.snort.social',
 ];
+const APP_MOUNTED_AT = Math.floor(Date.now() / 1000);
 
 type PetState = ActivityState;
 type Palette = 'peach' | 'mint' | 'night';
@@ -142,8 +148,7 @@ type Modal =
   | 'habitat-source'
   | 'viewer'
   | null;
-type ProfileCheckStatus = 'pass' | 'warn' | 'fail';
-type ProfileTier = 'excellent' | 'healthy' | 'attention' | 'incomplete';
+type ProfileCheckStatus = 'pass' | 'warn' | 'fail' | 'unavailable';
 type RelayPermissions = Record<string, { read: boolean; write: boolean }>;
 
 type Appearance = {
@@ -189,6 +194,7 @@ type ProfileCheck = {
   status: ProfileCheckStatus;
   detail: string;
   point: boolean;
+  assessed?: boolean;
 };
 
 type ProfileHealth = {
@@ -286,15 +292,35 @@ let loading = true;
 let actionBusy = false;
 let message = '';
 let modal: Modal = null;
+let sidePanelHidden = false;
 let previewState: PetState | null = null;
 let doctorCandidates: DoctorCandidate[] = [];
 let doctorSource: DoctorSource = null;
 let doctorLoading = false;
 let eventRouting: EventRouting = eventRoutingFromConfig({});
-let liveSubscription: OutboxSubscription | Subscription | null = null;
 let identitySubscription: Subscription | null = null;
 let themeSubscription: Subscription | null = null;
 let healthTimer: number | null = null;
+let activityRefreshTimer: number | null = null;
+let loadGeneration = 0;
+let liveSession: LiveSessionManager | null = null;
+let liveAggregator: LiveSignalAggregator | null = null;
+let liveStatusUnsubscribe: (() => void) | null = null;
+let liveRetryTimer: number | null = null;
+let liveRetryAttempt = 0;
+let liveUnavailable = false;
+const failedLiveChannels = new Set<LiveChannelId>();
+let emotionUnsubscribe: (() => void) | null = null;
+let speechUnsubscribe: (() => void) | null = null;
+let reactionFrame: number | null = null;
+let reactionEnrichmentGeneration = 0;
+const emotionController = new PetEmotionController({
+  reducedMotion: () => window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+});
+const speechController = new PetSpeechController();
+const reactionMetadataLoader = new ReactionMetadataLoader({
+  lookupProfile: lookupReactionProfile,
+});
 
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
@@ -443,20 +469,7 @@ function parseAddress(value: string): { name: string; domain: string } | null {
   return { name: parts[0], domain: parts[1] };
 }
 
-function hasResourceDomain(): boolean {
-  return typeof window.napplet?.resource?.bytes === 'function';
-}
-
-function hasLinkDomain(): boolean {
-  return typeof window.napplet?.link?.open === 'function';
-}
-
 async function openHabitatSource(): Promise<void> {
-  if (!hasLinkDomain()) {
-    message = 'This shell cannot open links. Use the project address shown here.';
-    render();
-    return;
-  }
   try {
     const result = await link.open(GIGI_PROFILE_HEALTH_URL, {
       label: "Open Gigi's Profile Health project",
@@ -475,7 +488,6 @@ async function openHabitatSource(): Promise<void> {
 }
 
 async function readJsonResource(url: string): Promise<Record<string, unknown>> {
-  if (!hasResourceDomain()) throw new Error('Resource domain unavailable');
   const blob = await resource.bytes(url);
   const parsed: unknown = JSON.parse(await blob.text());
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -497,15 +509,6 @@ async function checkNip05(value: string, owner: string): Promise<ProfileCheck> {
       point: false,
     };
   }
-  if (!hasResourceDomain()) {
-    return {
-      label: 'NIP-05',
-      status: 'warn',
-      detail: `${value} could not be verified in this shell`,
-      point: false,
-    };
-  }
-
   try {
     const data = await readJsonResource(
       `https://${address.domain}/.well-known/nostr.json?name=${encodeURIComponent(address.name)}`,
@@ -526,9 +529,10 @@ async function checkNip05(value: string, owner: string): Promise<ProfileCheck> {
   } catch {
     return {
       label: 'NIP-05',
-      status: 'warn',
-      detail: `${value} could not be verified`,
+      status: 'unavailable',
+      detail: `${value} could not be assessed in this runtime`,
       point: false,
+      assessed: false,
     };
   }
 }
@@ -551,15 +555,6 @@ async function checkLightning(value: string): Promise<ProfileCheck> {
       point: false,
     };
   }
-  if (!hasResourceDomain()) {
-    return {
-      label: 'Lightning address',
-      status: 'warn',
-      detail: `${value} could not be verified in this shell`,
-      point: false,
-    };
-  }
-
   try {
     const data = await readJsonResource(
       `https://${address.domain}/.well-known/lnurlp/${encodeURIComponent(address.name)}`,
@@ -575,9 +570,10 @@ async function checkLightning(value: string): Promise<ProfileCheck> {
   } catch {
     return {
       label: 'Lightning address',
-      status: 'warn',
-      detail: `${value} could not be verified`,
+      status: 'unavailable',
+      detail: `${value} could not be assessed in this runtime`,
       point: false,
+      assessed: false,
     };
   }
 }
@@ -610,15 +606,6 @@ async function checkProfileImage(
     return { label, status: 'fail', detail: 'Invalid URL', point: false };
   }
 
-  if (!hasResourceDomain()) {
-    return {
-      label,
-      status: 'warn',
-      detail: 'Could not verify in this shell',
-      point: false,
-    };
-  }
-
   try {
     const blob = await resource.bytes(rawUrl);
     const host = url.hostname.toLowerCase();
@@ -636,7 +623,13 @@ async function checkProfileImage(
       point: trusted,
     };
   } catch {
-    return { label, status: 'warn', detail: 'Could not verify the image', point: false };
+    return {
+      label,
+      status: 'unavailable',
+      detail: 'Could not assess the image in this runtime',
+      point: false,
+      assessed: false,
+    };
   }
 }
 
@@ -716,13 +709,6 @@ function checkWallet(
   };
 }
 
-function profileTierFor(score: number): ProfileTier {
-  if (score === PROFILE_HEALTH_MAX) return 'excellent';
-  if (score >= 6) return 'healthy';
-  if (score >= 4) return 'attention';
-  return 'incomplete';
-}
-
 async function calculateProfileHealth(
   owner: string,
   profile: ProfileData | null,
@@ -747,11 +733,9 @@ async function calculateProfileHealth(
     checkFollows(follows),
     checkWallet(latestEvent(events, 17_375, 37_375), latestEvent(events, 10_019)),
   ];
-  const score = checks.filter((check) => check.point).length;
+  const scored = scoreProfileChecks(checks);
   return {
-    score,
-    max: PROFILE_HEALTH_MAX,
-    tier: profileTierFor(score),
+    ...scored,
     checks,
   };
 }
@@ -925,13 +909,6 @@ async function loadAppearance(birth: Birth): Promise<Appearance> {
 
 async function restorePreview(): Promise<void> {
   previewState = null;
-  if (
-    typeof window.napplet?.storage?.getItem !== 'function' ||
-    typeof window.napplet.storage.setItem !== 'function' ||
-    typeof window.napplet.storage.removeItem !== 'function'
-  ) {
-    return;
-  }
   try {
     const saved = await storage.getItem('pet-preview-state');
     if (saved && saved in STATE_META) previewState = saved as PetState;
@@ -941,13 +918,6 @@ async function restorePreview(): Promise<void> {
 }
 
 async function rememberPreview(value: PetState | null): Promise<void> {
-  if (
-    typeof window.napplet?.storage?.getItem !== 'function' ||
-    typeof window.napplet.storage.setItem !== 'function' ||
-    typeof window.napplet.storage.removeItem !== 'function'
-  ) {
-    return;
-  }
   try {
     if (value) await storage.setItem('pet-preview-state', value);
     else await storage.removeItem('pet-preview-state');
@@ -956,36 +926,241 @@ async function rememberPreview(value: PetState | null): Promise<void> {
   }
 }
 
-function closeLiveSubscription(): void {
-  liveSubscription?.close();
-  liveSubscription = null;
+async function restoreSidePanelPreference(): Promise<void> {
+  try {
+    const saved = await storage.getItem('pet-care-panel-visibility');
+    if (saved === 'hidden' || saved === 'shown') {
+      sidePanelHidden = saved === 'hidden';
+      console.log('[nappagochi:layout] care panel preference restored', {
+        hidden: sidePanelHidden,
+      });
+    }
+  } catch {
+    // Optional shell storage must never block the pet UI.
+  }
+}
+
+async function rememberSidePanelPreference(): Promise<void> {
+  try {
+    await storage.setItem(
+      'pet-care-panel-visibility',
+      sidePanelHidden ? 'hidden' : 'shown',
+    );
+    console.log('[nappagochi:layout] care panel preference saved', {
+      hidden: sidePanelHidden,
+    });
+  } catch {
+    // The in-memory toggle remains usable when optional persistence fails.
+  }
+}
+
+const openLiveChannel: OpenLiveChannel = (definition, onEvent, onClosed) => {
+  if (eventRouting.localRelayOnly) {
+    return relay.subscribe(definition.filters, onEvent, () => undefined, {
+      relay: eventRouting.localRelayUrl,
+    });
+  }
+  const subscription = outbox.subscribe(definition.filters, {
+    ...(definition.authors?.length ? { authors: definition.authors } : {}),
+    ...(definition.relays?.length ? { relays: definition.relays } : {}),
+    limit: definition.limit,
+    timeoutMs: definition.timeoutMs,
+  });
+  subscription.on('event', onEvent);
+  subscription.on('closed', onClosed);
+  return subscription;
+};
+
+function closeLiveChannels(): void {
+  liveSession?.closeChannel('owner-activity');
+  liveSession?.closeChannel('inbound-engagement');
+}
+
+function resetLiveDegradation(): void {
+  if (liveRetryTimer !== null) window.clearTimeout(liveRetryTimer);
+  liveRetryTimer = null;
+  liveRetryAttempt = 0;
+  liveUnavailable = false;
+  failedLiveChannels.clear();
+}
+
+function handleLiveChannelStatus(status: {
+  id: LiveChannelId;
+  state: 'open' | 'closed';
+  reason?: string;
+}): void {
+  if (status.state === 'closed' && status.reason === 'replaced-or-closed') return;
+  if (status.state === 'open') failedLiveChannels.delete(status.id);
+  else failedLiveChannels.add(status.id);
+
+  const wasUnavailable = liveUnavailable;
+  liveUnavailable = failedLiveChannels.size > 0;
+  if (!liveUnavailable) {
+    liveRetryAttempt = 0;
+    if (liveRetryTimer !== null) window.clearTimeout(liveRetryTimer);
+    liveRetryTimer = null;
+  } else if (liveRetryTimer === null) {
+    const delayMs = liveRetryDelay(liveRetryAttempt);
+    if (delayMs === null) {
+      console.log('[nappagochi:degradation] live channel retries exhausted', {
+        failedChannels: [...failedLiveChannels],
+      });
+      if (wasUnavailable !== liveUnavailable) render();
+      return;
+    }
+    liveRetryAttempt += 1;
+    console.log('[nappagochi:degradation] live channel retry scheduled', {
+      channelId: status.id,
+      reason: status.reason ?? 'closed',
+      attempt: liveRetryAttempt,
+      delayMs,
+    });
+    liveRetryTimer = window.setTimeout(() => {
+      liveRetryTimer = null;
+      if (pubkey && activeBirth) beginLiveSubscription();
+    }, delayMs);
+  }
+  if (wasUnavailable !== liveUnavailable) render();
 }
 
 function beginLiveSubscription(): void {
-  closeLiveSubscription();
-  if (!pubkey || !activeBirth) return;
-  const filters = [{ authors: [pubkey], kinds: [1], since: activeBirth.event.created_at }];
-  const onEvent = (result: RelayEventResult) => {
-    if (notes.some((event) => event.id === result.event.id)) return;
-    notes.push(result.event);
-    void refreshDerivedState();
-  };
-  if (eventRouting.localRelayOnly) {
-    liveSubscription = relay.subscribe(filters, onEvent, () => undefined, {
-      relay: eventRouting.localRelayUrl,
+  closeLiveChannels();
+  if (!liveSession || !pubkey || !activeBirth) {
+    console.log('[nappagochi:live] owner activity channel not started', {
+      hasSession: Boolean(liveSession),
+      hasOwner: Boolean(pubkey),
+      hasActiveBirth: Boolean(activeBirth),
     });
     return;
   }
-  const subscription = outbox.subscribe(filters, {
+  const definition: LiveChannelDefinition = {
+    id: 'owner-activity',
+    filters: [{ authors: [pubkey], kinds: [1] }],
     authors: [pubkey],
     ...(readRelayHints.length
       ? { relays: readRelayHints }
       : {}),
     limit: 200,
     timeoutMs: 5_000,
+  };
+  liveSession.replaceChannel(definition);
+  liveSession.replaceChannel({
+    id: 'inbound-engagement',
+    // Intentionally omit kinds: this is the session feed for every event directed at the owner.
+    filters: [{ '#p': [pubkey] }],
+    ...(readRelayHints.length ? { relays: readRelayHints } : {}),
+    limit: 500,
+    timeoutMs: 5_000,
   });
-  subscription.on('event', onEvent);
-  liveSubscription = subscription;
+}
+
+function scheduleActivityProjectionRefresh(): void {
+  if (activityRefreshTimer !== null) {
+    console.log('[nappagochi:projection] activity refresh already scheduled', {
+      ownerPubkey: pubkey,
+      generation: loadGeneration,
+    });
+    return;
+  }
+  const generation = loadGeneration;
+  const owner = pubkey;
+  const birthId = activeBirth?.event.id;
+  console.log('[nappagochi:projection] activity invalidated by live signal', {
+    ownerPubkey: owner,
+    birthId,
+    generation,
+    debounceMs: 250,
+  });
+  activityRefreshTimer = window.setTimeout(() => {
+    activityRefreshTimer = null;
+    void refreshActivityProjection(generation, owner, birthId);
+  }, 250);
+}
+
+async function refreshActivityProjection(
+  generation: number,
+  owner: string,
+  birthId?: string,
+): Promise<void> {
+  if (!owner || !birthId) return;
+  console.log('[nappagochi:projection] activity history refresh started', {
+    ownerPubkey: owner,
+    birthId,
+    generation,
+  });
+  try {
+    const result = await queryPetEvents([{ authors: [owner], kinds: [1], limit: 500 }], {
+      authors: [owner],
+      limit: 500,
+      timeoutMs: 8_000,
+    });
+    if (
+      generation !== loadGeneration ||
+      owner !== pubkey ||
+      birthId !== activeBirth?.event.id
+    ) {
+      console.log('[nappagochi:projection] stale activity refresh discarded', {
+        ownerPubkey: owner,
+        birthId,
+        requestedGeneration: generation,
+        activeGeneration: loadGeneration,
+      });
+      return;
+    }
+    // Preserve already accepted local publishes if a relay query is briefly stale.
+    notes = mergeEventHistory(notes, result.events.map((item) => item.event));
+    verifiedMedicineIds = await verifyMedicineEvents(notes);
+    if (generation !== loadGeneration || owner !== pubkey) return;
+    if (activeBirth) health = reduceHealth(activeBirth, nowSeconds());
+    incompleteSync = incompleteSync || Boolean(result.incomplete);
+    console.log('[nappagochi:projection] activity history refresh applied', {
+      ownerPubkey: owner,
+      birthId,
+      generation,
+      noteCount: notes.length,
+      verifiedMedicineCount: verifiedMedicineIds.size,
+      healthState: health?.state ?? null,
+      incomplete: Boolean(result.incomplete),
+    });
+    render();
+  } catch (error) {
+    // A live hint cannot replace the last good historical projection.
+    console.log('[nappagochi:projection] activity history refresh failed; last projection retained', {
+      ownerPubkey: owner,
+      birthId,
+      generation,
+      reason: error instanceof Error ? error.message : 'unknown-error',
+    });
+  }
+}
+
+function handleLiveDelivery(delivery: LiveDelivery): void {
+  const { channelId, event, receivedAt } = delivery;
+  const signal = channelId === 'owner-activity'
+    ? event.pubkey === pubkey
+      ? classifyOwnerActivityDelivery({ event, receivedAt })
+      : null
+    : channelId === 'inbound-engagement'
+      ? classifyInboundDelivery({ event, ownerPubkey: pubkey, receivedAt })
+      : null;
+  if (!signal) {
+    console.log('[nappagochi:live] accepted delivery produced no reaction signal', {
+      channelId,
+      eventId: event.id,
+      kind: event.kind,
+    });
+    return;
+  }
+  console.log('[nappagochi:live] reaction signal classified', {
+    signalId: signal.id,
+    eventId: signal.eventId,
+    type: signal.type,
+    actorPubkey: signal.actorPubkey,
+    zapAmountSats: signal.zap?.amountSats,
+    zapSenderPubkey: signal.zap?.senderPubkey,
+  });
+  liveAggregator?.push(signal);
+  if (channelId === 'owner-activity') scheduleActivityProjectionRefresh();
 }
 
 async function refreshDerivedState(reverifyMedicine = true): Promise<void> {
@@ -1036,6 +1211,37 @@ async function queryPetEvents(
   );
 }
 
+async function lookupReactionProfile(pubkey: string): Promise<CommonProfileData | null> {
+  try {
+    const result = await common.getProfile(pubkey);
+    console.log('[nappagochi:enrichment] NAP-COMMON profile lookup returned', {
+      actorPubkey: pubkey,
+      ok: result.ok,
+      hasProfile: Boolean(result.profile),
+    });
+    if (result.ok) return result.profile ?? null;
+  } catch (error) {
+    console.log('[nappagochi:enrichment] NAP-COMMON profile lookup failed', {
+      actorPubkey: pubkey,
+      reason: error instanceof Error ? error.message : 'lookup-failed',
+    });
+  }
+
+  console.log('[nappagochi:enrichment] using outbox kind 0 fallback', {
+    actorPubkey: pubkey,
+  });
+  const result = await outbox.query(
+    [{ authors: [pubkey], kinds: [0], limit: 1 }],
+    { authors: [pubkey], limit: 1, timeoutMs: 700 },
+  );
+  const event = result.events
+    .map((item) => item.event)
+    .filter((candidate) => candidate.kind === 0 && candidate.pubkey === pubkey)
+    .sort((left, right) => right.created_at - left.created_at)[0] ?? null;
+  const profile = profileFromEvent(event);
+  return profile ? { ...profile } : null;
+}
+
 async function getPetEvent(
   eventId: string,
   options?: OutboxEventOptions,
@@ -1072,15 +1278,13 @@ async function prepareReadRelayPlan(owner: string): Promise<void> {
   }
 
   let plan: OutboxRelayPlan | null = null;
-  if (typeof window.napplet?.outbox?.resolveRelays === 'function') {
-    try {
-      plan = await outbox.resolveRelays({
-        authors: [owner],
-        direction: 'read',
-      });
-    } catch {
-      plan = null;
-    }
+  try {
+    plan = await outbox.resolveRelays({
+      authors: [owner],
+      direction: 'read',
+    });
+  } catch {
+    plan = null;
   }
   readRelayHints = hybridReadRelayHints(
     eventRouting,
@@ -1096,8 +1300,6 @@ async function prepareReadRelayPlan(owner: string): Promise<void> {
 
 async function setupEventRouting(): Promise<void> {
   eventRouting = eventRoutingFromConfig({});
-  const runtime = window.napplet;
-  if (typeof runtime?.config?.get !== 'function') return;
   try {
     eventRouting = eventRoutingFromConfig(await config.get());
   } catch {
@@ -1106,11 +1308,15 @@ async function setupEventRouting(): Promise<void> {
 }
 
 async function load(): Promise<void> {
+  loadGeneration += 1;
+  // Any pending optional reaction context belongs to the previous pet/session.
+  reactionEnrichmentGeneration += 1;
   loading = true;
   message = '';
   incompleteSync = false;
   pubkey = viewedPubkey || connectedPubkey;
-  closeLiveSubscription();
+  resetLiveDegradation();
+  closeLiveChannels();
   render();
 
   try {
@@ -1137,7 +1343,12 @@ async function load(): Promise<void> {
     await prepareReadRelayPlan(pubkey);
     const profilePromise = eventRouting.localRelayOnly || !ownerIsSigner
       ? Promise.resolve(null)
-      : identity.getProfile();
+      : identity.getProfile().catch((error) => {
+          console.log('[nappagochi:degradation] identity profile unavailable; using outbox metadata', {
+            reason: error instanceof Error ? error.message : 'profile-unavailable',
+          });
+          return null;
+        });
     const followsPromise = eventRouting.localRelayOnly || !ownerIsSigner
       ? Promise.resolve([] as string[])
       : identity.getFollows().catch(() => [] as string[]);
@@ -1257,14 +1468,14 @@ function displayedCondition(state: PetState): { label: string; note: string } {
     };
   }
   if (state === 'happy') {
-    if (profileHealth.score === PROFILE_HEALTH_MAX) {
+    if (profileHealth.tier === 'excellent') {
       return {
         label: 'Radiant',
         note: 'Bright-eyed, active, and flourishing in an excellent Nostr habitat.',
       };
     }
-    if (profileHealth.score >= 6) return STATE_META.happy;
-    if (profileHealth.score >= 4) {
+    if (profileHealth.tier === 'healthy') return STATE_META.happy;
+    if (profileHealth.tier === 'attention') {
       return {
         label: 'Unsettled',
         note: 'Active and safe, but its Nostr habitat could use a little care.',
@@ -1276,8 +1487,10 @@ function displayedCondition(state: PetState): { label: string; note: string } {
     };
   }
   if (state === 'content') {
-    if (profileHealth.score >= 6) return STATE_META.content;
-    if (profileHealth.score >= 4) {
+    if (profileHealth.tier === 'excellent' || profileHealth.tier === 'healthy') {
+      return STATE_META.content;
+    }
+    if (profileHealth.tier === 'attention') {
       return {
         label: 'Unsettled',
         note: 'Cozy for now, with a few gaps in its Nostr habitat.',
@@ -1319,9 +1532,13 @@ function petMarkup(
         ? '<span class="pet-accessory hat" aria-hidden="true"></span>'
         : '';
   const eye = petAppearance.eyes === 'sleepy' ? '⌒' : petAppearance.eyes === 'sparkle' ? '✦' : '●';
+  const poseStyle = petPoseStyle(resolvePetPose({ condition: state }));
+  const speech = speechController.snapshot().utterance;
 
   return `
-    <div class="pet pet--${state} palette--${petAppearance.palette}" role="img"
+    <span class="pet-speech${speech ? ' pet-speech--visible' : ''}" role="status"
+      aria-live="polite">${speech ? escapeHtml(speech.text) : ''}</span>
+    <div class="pet pet--${state} palette--${petAppearance.palette}" style="${poseStyle}" role="img"
       aria-label="${escapeHtml(conditionLabel)} Nostr pet">
       <span class="pet-shadow"></span>
       <span class="pet-ear pet-ear--left"></span>
@@ -1560,8 +1777,17 @@ function petHomeMarkup(): string {
 
   return `
     ${viewingBannerMarkup()}
-    <section class="pet-layout">
+    <section class="pet-layout${sidePanelHidden ? ' pet-layout--compact' : ''}">
       <div class="habitat">
+        ${liveUnavailable
+          ? '<span class="live-paused-pill habitat-live-status" role="status" title="Live reactions are temporarily unavailable; historical pet state is still active">live paused</span>'
+          : ''}
+        <button class="panel-toggle" type="button" data-action="toggle-panel"
+          aria-controls="care-panel" aria-expanded="${sidePanelHidden ? 'false' : 'true'}"
+          title="${sidePanelHidden ? 'Show pet details' : 'Hide pet details'}">
+          <span aria-hidden="true">${sidePanelHidden ? '‹' : '›'}</span>
+          <span>${sidePanelHidden ? 'Show details' : 'Hide details'}</span>
+        </button>
         <div class="ambient-shape ambient-shape--one"></div>
         <div class="ambient-shape ambient-shape--two"></div>
         ${petStage}
@@ -1573,7 +1799,7 @@ function petHomeMarkup(): string {
         </div>
       </div>
 
-      <aside class="care-panel">
+      <aside class="care-panel" id="care-panel" ${sidePanelHidden ? 'hidden' : ''}>
         <div class="care-heading">
           <div>
             <p class="eyebrow">Today’s pulse</p>
@@ -1782,14 +2008,24 @@ function profileModalMarkup(): string {
       (check) => `
         <li class="profile-check profile-check--${check.status}">
           <span class="profile-check-mark" aria-hidden="true">${
-            check.status === 'pass' ? '✓' : check.status === 'warn' ? '!' : '×'
+            check.status === 'pass'
+              ? '✓'
+              : check.status === 'warn'
+                ? '!'
+                : check.status === 'unavailable'
+                  ? '?'
+                  : '×'
           }</span>
           <span>
             <strong>${escapeHtml(check.label)}</strong>
             <small>${escapeHtml(check.detail)}</small>
           </span>
-          <b aria-label="${check.point ? 'Contributes one point' : 'No point'}">${
-            check.point ? '+1' : '—'
+          <b aria-label="${check.assessed === false
+            ? 'Excluded because it could not be assessed'
+            : check.point
+              ? 'Contributes one point'
+              : 'No point'}">${
+            check.assessed === false ? '?' : check.point ? '+1' : '—'
           }</b>
         </li>`,
     )
@@ -1823,8 +2059,8 @@ function profileModalMarkup(): string {
           : '<div class="empty-state"><strong>No profile checks loaded</strong><p>Try reopening this view after your Nostr data has synced.</p></div>'
       }
       <p class="profile-method-note">
-        Eight checks: profile, NIP-05, picture, banner, Lightning address, relay setup,
-        follows, and NIP-60 wallet. External checks use the shell’s resource boundary.
+        Eight possible checks: profile, NIP-05, picture, banner, Lightning address, relay setup,
+        follows, and NIP-60 wallet. Checks unavailable in this runtime are excluded from the score.
       </p>
     `,
   );
@@ -1944,6 +2180,64 @@ function render(): void {
       ${modalMarkup()}
     </div>`;
   bindInteractions();
+  syncEmotionRenderer();
+}
+
+function applyEmotionSnapshot(snapshot: PetEmotionSnapshot): void {
+  const pet = document.querySelector<HTMLElement>('.pet-stage .pet');
+  if (!pet) return;
+  pet.setAttribute('style', petPoseStyle(snapshot.pose));
+  if (snapshot.reaction) pet.dataset.reaction = snapshot.reaction;
+  else delete pet.dataset.reaction;
+}
+
+function applySpeechSnapshot(snapshot: PetSpeechSnapshot): void {
+  const bubble = document.querySelector<HTMLElement>('.pet-stage .pet-speech');
+  if (!bubble) return;
+  bubble.textContent = snapshot.utterance?.text ?? '';
+  bubble.classList.toggle('pet-speech--visible', Boolean(snapshot.utterance));
+  if (snapshot.utterance) bubble.dataset.intent = snapshot.utterance.intent;
+  else delete bubble.dataset.intent;
+}
+
+function syncEmotionRenderer(): void {
+  emotionUnsubscribe?.();
+  emotionUnsubscribe = null;
+  speechUnsubscribe?.();
+  speechUnsubscribe = null;
+  if (!activeBirth || !health) return;
+  // Preview changes only the displayed pose; authoritative health still gates reactions.
+  emotionController.setCondition(health.state);
+  speechController.setCondition(health.state);
+  // Speech remains ephemeral even when preview replaces the authoritative pose.
+  speechUnsubscribe = speechController.subscribe(applySpeechSnapshot);
+  if (previewState) {
+    applyEmotionSnapshot({
+      condition: previewState,
+      mood: 'neutral',
+      reaction: null,
+      pose: resolvePetPose({ condition: previewState }),
+    });
+    return;
+  }
+  emotionUnsubscribe = emotionController.subscribe(applyEmotionSnapshot);
+}
+
+function animateCurrentReaction(): void {
+  if (reactionFrame !== null) window.cancelAnimationFrame(reactionFrame);
+  const step = () => {
+    const snapshot = emotionController.snapshot();
+    applyEmotionSnapshot(snapshot);
+    if (snapshot.reaction) reactionFrame = window.requestAnimationFrame(step);
+    else {
+      reactionFrame = null;
+      console.log('[nappagochi:emotion] renderer animation loop settled', {
+        condition: snapshot.condition,
+        mood: snapshot.mood,
+      });
+    }
+  };
+  step();
 }
 
 function bindInteractions(): void {
@@ -1984,6 +2278,13 @@ function bindInteractions(): void {
         void loadDoctorCandidates();
       } else if (action === 'settings' && canWriteForCurrentPet()) {
         modal = 'settings';
+        render();
+      } else if (action === 'toggle-panel') {
+        sidePanelHidden = !sidePanelHidden;
+        console.log('[nappagochi:layout] care panel visibility changed', {
+          hidden: sidePanelHidden,
+        });
+        void rememberSidePanelPreference();
         render();
       } else if (action === 'preview') {
         modal = 'preview';
@@ -2387,22 +2688,35 @@ function applyTheme(theme: Theme): void {
 
 async function setupTheme(): Promise<void> {
   applyTheme(FALLBACK_THEME);
-  if (
-    typeof window.napplet?.theme?.get !== 'function' ||
-    typeof window.napplet.theme.onChanged !== 'function'
-  ) {
+  try {
+    applyTheme(await themeGet());
+  } catch {
+    applyTheme(FALLBACK_THEME);
     return;
   }
   try {
-    applyTheme(await themeGet());
     themeSubscription = themeOnChanged(applyTheme);
   } catch {
-    applyTheme(FALLBACK_THEME);
+    console.log('[nappagochi:degradation] live theme updates unavailable; current theme retained');
   }
 }
 
 function cleanUp(): void {
-  closeLiveSubscription();
+  liveSession?.destroy();
+  liveSession = null;
+  liveAggregator?.destroy();
+  liveAggregator = null;
+  liveStatusUnsubscribe?.();
+  liveStatusUnsubscribe = null;
+  resetLiveDegradation();
+  emotionUnsubscribe?.();
+  emotionUnsubscribe = null;
+  emotionController.destroy();
+  speechUnsubscribe?.();
+  speechUnsubscribe = null;
+  speechController.destroy();
+  if (reactionFrame !== null) window.cancelAnimationFrame(reactionFrame);
+  if (activityRefreshTimer !== null) window.clearTimeout(activityRefreshTimer);
   identitySubscription?.close();
   themeSubscription?.close();
   if (healthTimer !== null) window.clearInterval(healthTimer);
@@ -2414,6 +2728,48 @@ async function start(): Promise<void> {
   if (!hasRequiredRuntime()) return;
   await setupTheme();
   await setupEventRouting();
+  await restoreSidePanelPreference();
+  liveSession = new LiveSessionManager({
+    mountedAt: APP_MOUNTED_AT,
+    openChannel: openLiveChannel,
+  });
+  liveSession.onDelivery(handleLiveDelivery);
+  liveStatusUnsubscribe = liveSession.onStatus(handleLiveChannelStatus);
+  liveAggregator = new LiveSignalAggregator({
+    onAggregate: (aggregate) => {
+      const reaction = reactionForLiveAggregate(aggregate);
+      const accepted = emotionController.react(reaction);
+      console.log('[nappagochi:emotion] live aggregate evaluated', {
+        reaction,
+        accepted,
+        totalSignals: aggregate.total,
+        actorCount: aggregate.actorCount,
+        byType: aggregate.byType,
+        authoritativeCondition: health?.state ?? null,
+        previewActive: Boolean(previewState),
+      });
+      if (accepted) {
+        animateCurrentReaction();
+        const enrichmentGeneration = ++reactionEnrichmentGeneration;
+        const zapSender = aggregate.representativeSignal.zap?.senderPubkey;
+        void reactionMetadataLoader.enrichApprovedReaction({
+          reactionAccepted: accepted,
+          reactionId: reaction,
+          actorPubkey: zapSender,
+        }).then((actor) => {
+          if (enrichmentGeneration !== reactionEnrichmentGeneration) {
+            console.log('[nappagochi:enrichment] stale reaction metadata discarded', {
+              reaction,
+              enrichmentGeneration,
+              activeGeneration: reactionEnrichmentGeneration,
+            });
+            return;
+          }
+          speechController.say(speechForLiveAggregate(aggregate, 'gentle', actor?.name));
+        });
+      }
+    },
+  });
   identitySubscription = identity.onChanged(() => {
     void load();
   });
