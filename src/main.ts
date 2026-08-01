@@ -85,34 +85,8 @@ declare global {
       outbox?: {
         getEvent?: unknown;
         query?: unknown;
-        resolveRelays?: unknown;
         subscribe?: unknown;
         publish?: unknown;
-      };
-      relay?: {
-        query?: unknown;
-        subscribe?: unknown;
-      };
-      config?: {
-        get?: unknown;
-      };
-      storage?: {
-        getItem?: unknown;
-        setItem?: unknown;
-        removeItem?: unknown;
-      };
-      theme?: {
-        get?: unknown;
-        onChanged?: unknown;
-      };
-      resource?: {
-        bytes?: unknown;
-      };
-      link?: {
-        open?: unknown;
-      };
-      common?: {
-        getProfile?: unknown;
       };
     };
   }
@@ -316,6 +290,7 @@ let loading = true;
 let actionBusy = false;
 let message = '';
 let modal: Modal = null;
+let sidePanelHidden = false;
 let previewState: PetState | null = null;
 let doctorCandidates: DoctorCandidate[] = [];
 let doctorSource: DoctorSource = null;
@@ -487,20 +462,7 @@ function parseAddress(value: string): { name: string; domain: string } | null {
   return { name: parts[0], domain: parts[1] };
 }
 
-function hasResourceDomain(): boolean {
-  return typeof window.napplet?.resource?.bytes === 'function';
-}
-
-function hasLinkDomain(): boolean {
-  return typeof window.napplet?.link?.open === 'function';
-}
-
 async function openHabitatSource(): Promise<void> {
-  if (!hasLinkDomain()) {
-    message = 'This shell cannot open links. Use the project address shown here.';
-    render();
-    return;
-  }
   try {
     const result = await link.open(GIGI_PROFILE_HEALTH_URL, {
       label: "Open Gigi's Profile Health project",
@@ -519,7 +481,6 @@ async function openHabitatSource(): Promise<void> {
 }
 
 async function readJsonResource(url: string): Promise<Record<string, unknown>> {
-  if (!hasResourceDomain()) throw new Error('Resource domain unavailable');
   const blob = await resource.bytes(url);
   const parsed: unknown = JSON.parse(await blob.text());
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -541,15 +502,6 @@ async function checkNip05(value: string, owner: string): Promise<ProfileCheck> {
       point: false,
     };
   }
-  if (!hasResourceDomain()) {
-    return {
-      label: 'NIP-05',
-      status: 'warn',
-      detail: `${value} could not be verified in this shell`,
-      point: false,
-    };
-  }
-
   try {
     const data = await readJsonResource(
       `https://${address.domain}/.well-known/nostr.json?name=${encodeURIComponent(address.name)}`,
@@ -595,15 +547,6 @@ async function checkLightning(value: string): Promise<ProfileCheck> {
       point: false,
     };
   }
-  if (!hasResourceDomain()) {
-    return {
-      label: 'Lightning address',
-      status: 'warn',
-      detail: `${value} could not be verified in this shell`,
-      point: false,
-    };
-  }
-
   try {
     const data = await readJsonResource(
       `https://${address.domain}/.well-known/lnurlp/${encodeURIComponent(address.name)}`,
@@ -652,15 +595,6 @@ async function checkProfileImage(
     if (url.protocol !== 'https:') throw new Error('Unsupported URL');
   } catch {
     return { label, status: 'fail', detail: 'Invalid URL', point: false };
-  }
-
-  if (!hasResourceDomain()) {
-    return {
-      label,
-      status: 'warn',
-      detail: 'Could not verify in this shell',
-      point: false,
-    };
   }
 
   try {
@@ -969,13 +903,6 @@ async function loadAppearance(birth: Birth): Promise<Appearance> {
 
 async function restorePreview(): Promise<void> {
   previewState = null;
-  if (
-    typeof window.napplet?.storage?.getItem !== 'function' ||
-    typeof window.napplet.storage.setItem !== 'function' ||
-    typeof window.napplet.storage.removeItem !== 'function'
-  ) {
-    return;
-  }
   try {
     const saved = await storage.getItem('pet-preview-state');
     if (saved && saved in STATE_META) previewState = saved as PetState;
@@ -985,18 +912,39 @@ async function restorePreview(): Promise<void> {
 }
 
 async function rememberPreview(value: PetState | null): Promise<void> {
-  if (
-    typeof window.napplet?.storage?.getItem !== 'function' ||
-    typeof window.napplet.storage.setItem !== 'function' ||
-    typeof window.napplet.storage.removeItem !== 'function'
-  ) {
-    return;
-  }
   try {
     if (value) await storage.setItem('pet-preview-state', value);
     else await storage.removeItem('pet-preview-state');
   } catch {
     // Preview persistence can fail without affecting the pet.
+  }
+}
+
+async function restoreSidePanelPreference(): Promise<void> {
+  try {
+    const saved = await storage.getItem('pet-care-panel-visibility');
+    if (saved === 'hidden' || saved === 'shown') {
+      sidePanelHidden = saved === 'hidden';
+      console.log('[nappagochi:layout] care panel preference restored', {
+        hidden: sidePanelHidden,
+      });
+    }
+  } catch {
+    // Optional shell storage must never block the pet UI.
+  }
+}
+
+async function rememberSidePanelPreference(): Promise<void> {
+  try {
+    await storage.setItem(
+      'pet-care-panel-visibility',
+      sidePanelHidden ? 'hidden' : 'shown',
+    );
+    console.log('[nappagochi:layout] care panel preference saved', {
+      hidden: sidePanelHidden,
+    });
+  } catch {
+    // The in-memory toggle remains usable when optional persistence fails.
   }
 }
 
@@ -1211,23 +1159,19 @@ async function queryPetEvents(
 }
 
 async function lookupReactionProfile(pubkey: string): Promise<CommonProfileData | null> {
-  if (typeof window.napplet?.common?.getProfile === 'function') {
-    try {
-      const result = await common.getProfile(pubkey);
-      console.log('[nappagochi:enrichment] NAP-COMMON profile lookup returned', {
-        actorPubkey: pubkey,
-        ok: result.ok,
-        hasProfile: Boolean(result.profile),
-      });
-      if (result.ok) return result.profile ?? null;
-      return null;
-    } catch (error) {
-      console.log('[nappagochi:enrichment] NAP-COMMON profile lookup failed', {
-        actorPubkey: pubkey,
-        reason: error instanceof Error ? error.message : 'lookup-failed',
-      });
-      return null;
-    }
+  try {
+    const result = await common.getProfile(pubkey);
+    console.log('[nappagochi:enrichment] NAP-COMMON profile lookup returned', {
+      actorPubkey: pubkey,
+      ok: result.ok,
+      hasProfile: Boolean(result.profile),
+    });
+    if (result.ok) return result.profile ?? null;
+  } catch (error) {
+    console.log('[nappagochi:enrichment] NAP-COMMON profile lookup failed', {
+      actorPubkey: pubkey,
+      reason: error instanceof Error ? error.message : 'lookup-failed',
+    });
   }
 
   console.log('[nappagochi:enrichment] using outbox kind 0 fallback', {
@@ -1281,15 +1225,13 @@ async function prepareReadRelayPlan(owner: string): Promise<void> {
   }
 
   let plan: OutboxRelayPlan | null = null;
-  if (typeof window.napplet?.outbox?.resolveRelays === 'function') {
-    try {
-      plan = await outbox.resolveRelays({
-        authors: [owner],
-        direction: 'read',
-      });
-    } catch {
-      plan = null;
-    }
+  try {
+    plan = await outbox.resolveRelays({
+      authors: [owner],
+      direction: 'read',
+    });
+  } catch {
+    plan = null;
   }
   readRelayHints = hybridReadRelayHints(
     eventRouting,
@@ -1305,8 +1247,6 @@ async function prepareReadRelayPlan(owner: string): Promise<void> {
 
 async function setupEventRouting(): Promise<void> {
   eventRouting = eventRoutingFromConfig({});
-  const runtime = window.napplet;
-  if (typeof runtime?.config?.get !== 'function') return;
   try {
     eventRouting = eventRoutingFromConfig(await config.get());
   } catch {
@@ -1823,8 +1763,14 @@ function petHomeMarkup(): string {
   return `
     ${shellHeader()}
     ${viewingBannerMarkup()}
-    <section class="pet-layout">
+    <section class="pet-layout${sidePanelHidden ? ' pet-layout--compact' : ''}">
       <div class="habitat">
+        <button class="panel-toggle" type="button" data-action="toggle-panel"
+          aria-controls="care-panel" aria-expanded="${sidePanelHidden ? 'false' : 'true'}"
+          title="${sidePanelHidden ? 'Show pet details' : 'Hide pet details'}">
+          <span aria-hidden="true">${sidePanelHidden ? '‹' : '›'}</span>
+          <span>${sidePanelHidden ? 'Show details' : 'Hide details'}</span>
+        </button>
         <div class="ambient-shape ambient-shape--one"></div>
         <div class="ambient-shape ambient-shape--two"></div>
         ${petStage}
@@ -1836,7 +1782,7 @@ function petHomeMarkup(): string {
         </div>
       </div>
 
-      <aside class="care-panel">
+      <aside class="care-panel" id="care-panel" ${sidePanelHidden ? 'hidden' : ''}>
         <div class="care-heading">
           <div>
             <p class="eyebrow">Today’s pulse</p>
@@ -2305,6 +2251,13 @@ function bindInteractions(): void {
       } else if (action === 'settings' && canWriteForCurrentPet()) {
         modal = 'settings';
         render();
+      } else if (action === 'toggle-panel') {
+        sidePanelHidden = !sidePanelHidden;
+        console.log('[nappagochi:layout] care panel visibility changed', {
+          hidden: sidePanelHidden,
+        });
+        void rememberSidePanelPreference();
+        render();
       } else if (action === 'preview') {
         modal = 'preview';
         render();
@@ -2707,12 +2660,6 @@ function applyTheme(theme: Theme): void {
 
 async function setupTheme(): Promise<void> {
   applyTheme(FALLBACK_THEME);
-  if (
-    typeof window.napplet?.theme?.get !== 'function' ||
-    typeof window.napplet.theme.onChanged !== 'function'
-  ) {
-    return;
-  }
   try {
     applyTheme(await themeGet());
     themeSubscription = themeOnChanged(applyTheme);
@@ -2745,6 +2692,7 @@ async function start(): Promise<void> {
   if (!hasRequiredRuntime()) return;
   await setupTheme();
   await setupEventRouting();
+  await restoreSidePanelPreference();
   liveSession = new LiveSessionManager({
     mountedAt: APP_MOUNTED_AT,
     openChannel: openLiveChannel,

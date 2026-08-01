@@ -237,6 +237,14 @@ select:focus-visible {
   grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.8fr);
 }
 
+.pet-layout--compact {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.pet-layout--compact .habitat {
+  min-height: calc(100vh - 62px);
+}
+
 .habitat {
   position: relative;
   display: grid;
@@ -246,6 +254,37 @@ select:focus-visible {
   overflow: hidden;
   padding: 48px 40px 62px;
   isolation: isolate;
+}
+
+.panel-toggle {
+  position: absolute;
+  z-index: 3;
+  top: 18px;
+  right: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 7px 11px 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--ink-muted);
+  background: color-mix(in srgb, var(--paper-strong) 90%, transparent);
+  box-shadow: 0 9px 24px color-mix(in srgb, var(--shell-text) 8%, transparent);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 750;
+  backdrop-filter: blur(12px);
+}
+
+.panel-toggle span[aria-hidden='true'] {
+  font-size: 20px;
+  line-height: 0.8;
+}
+
+.panel-toggle:hover {
+  border-color: color-mix(in srgb, var(--shell-primary) 45%, var(--line));
+  color: var(--shell-text);
 }
 
 .habitat::before {
@@ -610,6 +649,10 @@ select:focus-visible {
   padding: clamp(32px, 5vw, 64px) clamp(24px, 4vw, 54px);
   border-left: 1px solid var(--line);
   background: color-mix(in srgb, var(--paper) 90%, transparent);
+}
+
+.care-panel[hidden] {
+  display: none;
 }
 
 .care-heading {
@@ -1630,9 +1673,18 @@ form > small {
     min-height: calc(100vh - 54px);
   }
 
+  .pet-layout--compact .habitat {
+    min-height: calc(100vh - 54px);
+  }
+
   .habitat {
     min-height: 390px;
     padding: 26px 18px 30px;
+  }
+
+  .panel-toggle {
+    top: 12px;
+    right: 12px;
   }
 
   .habitat::before {
@@ -1684,6 +1736,17 @@ form > small {
   .view-mode-button {
     min-height: 30px;
     padding: 5px 8px;
+  }
+
+  .panel-toggle {
+    width: 36px;
+    min-height: 36px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .panel-toggle span:not([aria-hidden='true']) {
+    display: none;
   }
 
   .habitat {
