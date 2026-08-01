@@ -54,7 +54,9 @@ import {
 } from './pet-emotion';
 import {
   LiveSessionManager,
+  liveRetryDelay,
   type LiveChannelDefinition,
+  type LiveChannelId,
   type LiveDelivery,
   type OpenLiveChannel,
 } from './live-session';
@@ -70,6 +72,7 @@ import {
   type PetSpeechSnapshot,
 } from './pet-speech';
 import { ReactionMetadataLoader } from './reaction-enrichment';
+import { scoreProfileChecks, type ProfileTier } from './profile-scoring';
 import './styles.css';
 
 declare global {
@@ -145,8 +148,7 @@ type Modal =
   | 'habitat-source'
   | 'viewer'
   | null;
-type ProfileCheckStatus = 'pass' | 'warn' | 'fail';
-type ProfileTier = 'excellent' | 'healthy' | 'attention' | 'incomplete';
+type ProfileCheckStatus = 'pass' | 'warn' | 'fail' | 'unavailable';
 type RelayPermissions = Record<string, { read: boolean; write: boolean }>;
 
 type Appearance = {
@@ -192,6 +194,7 @@ type ProfileCheck = {
   status: ProfileCheckStatus;
   detail: string;
   point: boolean;
+  assessed?: boolean;
 };
 
 type ProfileHealth = {
@@ -303,6 +306,11 @@ let activityRefreshTimer: number | null = null;
 let loadGeneration = 0;
 let liveSession: LiveSessionManager | null = null;
 let liveAggregator: LiveSignalAggregator | null = null;
+let liveStatusUnsubscribe: (() => void) | null = null;
+let liveRetryTimer: number | null = null;
+let liveRetryAttempt = 0;
+let liveUnavailable = false;
+const failedLiveChannels = new Set<LiveChannelId>();
 let emotionUnsubscribe: (() => void) | null = null;
 let speechUnsubscribe: (() => void) | null = null;
 let reactionFrame: number | null = null;
@@ -522,9 +530,10 @@ async function checkNip05(value: string, owner: string): Promise<ProfileCheck> {
   } catch {
     return {
       label: 'NIP-05',
-      status: 'warn',
-      detail: `${value} could not be verified`,
+      status: 'unavailable',
+      detail: `${value} could not be assessed in this runtime`,
       point: false,
+      assessed: false,
     };
   }
 }
@@ -562,9 +571,10 @@ async function checkLightning(value: string): Promise<ProfileCheck> {
   } catch {
     return {
       label: 'Lightning address',
-      status: 'warn',
-      detail: `${value} could not be verified`,
+      status: 'unavailable',
+      detail: `${value} could not be assessed in this runtime`,
       point: false,
+      assessed: false,
     };
   }
 }
@@ -614,7 +624,13 @@ async function checkProfileImage(
       point: trusted,
     };
   } catch {
-    return { label, status: 'warn', detail: 'Could not verify the image', point: false };
+    return {
+      label,
+      status: 'unavailable',
+      detail: 'Could not assess the image in this runtime',
+      point: false,
+      assessed: false,
+    };
   }
 }
 
@@ -694,13 +710,6 @@ function checkWallet(
   };
 }
 
-function profileTierFor(score: number): ProfileTier {
-  if (score === PROFILE_HEALTH_MAX) return 'excellent';
-  if (score >= 6) return 'healthy';
-  if (score >= 4) return 'attention';
-  return 'incomplete';
-}
-
 async function calculateProfileHealth(
   owner: string,
   profile: ProfileData | null,
@@ -725,11 +734,9 @@ async function calculateProfileHealth(
     checkFollows(follows),
     checkWallet(latestEvent(events, 17_375, 37_375), latestEvent(events, 10_019)),
   ];
-  const score = checks.filter((check) => check.point).length;
+  const scored = scoreProfileChecks(checks);
   return {
-    score,
-    max: PROFILE_HEALTH_MAX,
-    tier: profileTierFor(score),
+    ...scored,
     checks,
   };
 }
@@ -968,6 +975,53 @@ const openLiveChannel: OpenLiveChannel = (definition, onEvent, onClosed) => {
 function closeLiveChannels(): void {
   liveSession?.closeChannel('owner-activity');
   liveSession?.closeChannel('inbound-engagement');
+}
+
+function resetLiveDegradation(): void {
+  if (liveRetryTimer !== null) window.clearTimeout(liveRetryTimer);
+  liveRetryTimer = null;
+  liveRetryAttempt = 0;
+  liveUnavailable = false;
+  failedLiveChannels.clear();
+}
+
+function handleLiveChannelStatus(status: {
+  id: LiveChannelId;
+  state: 'open' | 'closed';
+  reason?: string;
+}): void {
+  if (status.state === 'closed' && status.reason === 'replaced-or-closed') return;
+  if (status.state === 'open') failedLiveChannels.delete(status.id);
+  else failedLiveChannels.add(status.id);
+
+  const wasUnavailable = liveUnavailable;
+  liveUnavailable = failedLiveChannels.size > 0;
+  if (!liveUnavailable) {
+    liveRetryAttempt = 0;
+    if (liveRetryTimer !== null) window.clearTimeout(liveRetryTimer);
+    liveRetryTimer = null;
+  } else if (liveRetryTimer === null) {
+    const delayMs = liveRetryDelay(liveRetryAttempt);
+    if (delayMs === null) {
+      console.log('[nappagochi:degradation] live channel retries exhausted', {
+        failedChannels: [...failedLiveChannels],
+      });
+      if (wasUnavailable !== liveUnavailable) render();
+      return;
+    }
+    liveRetryAttempt += 1;
+    console.log('[nappagochi:degradation] live channel retry scheduled', {
+      channelId: status.id,
+      reason: status.reason ?? 'closed',
+      attempt: liveRetryAttempt,
+      delayMs,
+    });
+    liveRetryTimer = window.setTimeout(() => {
+      liveRetryTimer = null;
+      if (pubkey && activeBirth) beginLiveSubscription();
+    }, delayMs);
+  }
+  if (wasUnavailable !== liveUnavailable) render();
 }
 
 function beginLiveSubscription(): void {
@@ -1262,6 +1316,7 @@ async function load(): Promise<void> {
   message = '';
   incompleteSync = false;
   pubkey = viewedPubkey || connectedPubkey;
+  resetLiveDegradation();
   closeLiveChannels();
   render();
 
@@ -1290,7 +1345,12 @@ async function load(): Promise<void> {
     await prepareReadRelayPlan(pubkey);
     const profilePromise = eventRouting.localRelayOnly || !ownerIsSigner
       ? Promise.resolve(null)
-      : identity.getProfile();
+      : identity.getProfile().catch((error) => {
+          console.log('[nappagochi:degradation] identity profile unavailable; using outbox metadata', {
+            reason: error instanceof Error ? error.message : 'profile-unavailable',
+          });
+          return null;
+        });
     const followsPromise = eventRouting.localRelayOnly || !ownerIsSigner
       ? Promise.resolve([] as string[])
       : identity.getFollows().catch(() => [] as string[]);
@@ -1415,14 +1475,14 @@ function displayedCondition(state: PetState): { label: string; note: string } {
     };
   }
   if (state === 'happy') {
-    if (profileHealth.score === PROFILE_HEALTH_MAX) {
+    if (profileHealth.tier === 'excellent') {
       return {
         label: 'Radiant',
         note: 'Bright-eyed, active, and flourishing in an excellent Nostr habitat.',
       };
     }
-    if (profileHealth.score >= 6) return STATE_META.happy;
-    if (profileHealth.score >= 4) {
+    if (profileHealth.tier === 'healthy') return STATE_META.happy;
+    if (profileHealth.tier === 'attention') {
       return {
         label: 'Unsettled',
         note: 'Active and safe, but its Nostr habitat could use a little care.',
@@ -1434,8 +1494,10 @@ function displayedCondition(state: PetState): { label: string; note: string } {
     };
   }
   if (state === 'content') {
-    if (profileHealth.score >= 6) return STATE_META.content;
-    if (profileHealth.score >= 4) {
+    if (profileHealth.tier === 'excellent' || profileHealth.tier === 'healthy') {
+      return STATE_META.content;
+    }
+    if (profileHealth.tier === 'attention') {
       return {
         label: 'Unsettled',
         note: 'Cozy for now, with a few gaps in its Nostr habitat.',
@@ -1528,6 +1590,7 @@ function shellHeader(): string {
       <div class="account">
         ${relayModePill}
         ${viewerPill}
+        ${liveUnavailable ? '<span class="live-paused-pill" title="Live reactions are temporarily unavailable; historical pet state is still active">live paused</span>' : ''}
         ${incompleteSync ? '<span class="sync-pill" title="Some relay results were incomplete">partial sync</span>' : ''}
         ${
           pubkey
@@ -1991,14 +2054,24 @@ function profileModalMarkup(): string {
       (check) => `
         <li class="profile-check profile-check--${check.status}">
           <span class="profile-check-mark" aria-hidden="true">${
-            check.status === 'pass' ? '✓' : check.status === 'warn' ? '!' : '×'
+            check.status === 'pass'
+              ? '✓'
+              : check.status === 'warn'
+                ? '!'
+                : check.status === 'unavailable'
+                  ? '?'
+                  : '×'
           }</span>
           <span>
             <strong>${escapeHtml(check.label)}</strong>
             <small>${escapeHtml(check.detail)}</small>
           </span>
-          <b aria-label="${check.point ? 'Contributes one point' : 'No point'}">${
-            check.point ? '+1' : '—'
+          <b aria-label="${check.assessed === false
+            ? 'Excluded because it could not be assessed'
+            : check.point
+              ? 'Contributes one point'
+              : 'No point'}">${
+            check.assessed === false ? '?' : check.point ? '+1' : '—'
           }</b>
         </li>`,
     )
@@ -2032,8 +2105,8 @@ function profileModalMarkup(): string {
           : '<div class="empty-state"><strong>No profile checks loaded</strong><p>Try reopening this view after your Nostr data has synced.</p></div>'
       }
       <p class="profile-method-note">
-        Eight checks: profile, NIP-05, picture, banner, Lightning address, relay setup,
-        follows, and NIP-60 wallet. External checks use the shell’s resource boundary.
+        Eight possible checks: profile, NIP-05, picture, banner, Lightning address, relay setup,
+        follows, and NIP-60 wallet. Checks unavailable in this runtime are excluded from the score.
       </p>
     `,
   );
@@ -2662,9 +2735,14 @@ async function setupTheme(): Promise<void> {
   applyTheme(FALLBACK_THEME);
   try {
     applyTheme(await themeGet());
-    themeSubscription = themeOnChanged(applyTheme);
   } catch {
     applyTheme(FALLBACK_THEME);
+    return;
+  }
+  try {
+    themeSubscription = themeOnChanged(applyTheme);
+  } catch {
+    console.log('[nappagochi:degradation] live theme updates unavailable; current theme retained');
   }
 }
 
@@ -2673,6 +2751,9 @@ function cleanUp(): void {
   liveSession = null;
   liveAggregator?.destroy();
   liveAggregator = null;
+  liveStatusUnsubscribe?.();
+  liveStatusUnsubscribe = null;
+  resetLiveDegradation();
   emotionUnsubscribe?.();
   emotionUnsubscribe = null;
   emotionController.destroy();
@@ -2698,6 +2779,7 @@ async function start(): Promise<void> {
     openChannel: openLiveChannel,
   });
   liveSession.onDelivery(handleLiveDelivery);
+  liveStatusUnsubscribe = liveSession.onStatus(handleLiveChannelStatus);
   liveAggregator = new LiveSignalAggregator({
     onAggregate: (aggregate) => {
       const reaction = reactionForLiveAggregate(aggregate);

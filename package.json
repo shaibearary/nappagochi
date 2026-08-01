@@ -20,6 +20,7 @@
     "test:view-mode": "node --test scripts/view-mode.test.mjs",
     "test:activity": "node --test scripts/activity-reconciliation.test.mjs",
     "test:habitat": "node --test scripts/habitat-sickness.test.mjs",
+    "test:profile-scoring": "node --test scripts/profile-scoring.test.mjs",
     "test:emotion": "node --test scripts/pet-emotion.test.mjs",
     "test:speech": "node --test scripts/pet-speech.test.mjs",
     "test:enrichment": "node --test scripts/reaction-enrichment.test.mjs",

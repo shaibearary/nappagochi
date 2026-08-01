@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { LiveSessionManager } from '../src/live-session.ts';
+import { LiveSessionManager, liveRetryDelay } from '../src/live-session.ts';
+
+test('live retry delays are bounded exponential backoff', () => {
+  assert.deepEqual([0, 1, 2, 3].map(liveRetryDelay), [1_000, 2_000, 4_000, null]);
+  assert.equal(liveRetryDelay(-1), null);
+});
 
 function event(id, createdAt) {
   return {

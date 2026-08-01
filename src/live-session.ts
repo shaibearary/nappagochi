@@ -34,6 +34,11 @@ export type OpenLiveChannel = (
 
 type LiveLogger = (message: string, details?: Record<string, unknown>) => void;
 
+export function liveRetryDelay(attempt: number): number | null {
+  if (!Number.isInteger(attempt) || attempt < 0 || attempt >= 3) return null;
+  return 1_000 * (2 ** attempt);
+}
+
 type ActiveChannel = {
   token: symbol;
   handle: CloseableLiveChannel;
