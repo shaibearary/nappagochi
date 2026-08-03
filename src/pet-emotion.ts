@@ -15,6 +15,7 @@ export type PetReaction =
   | 'notice'
   | 'tap-hop'
   | 'celebrate'
+  | 'reply-roll'
   | 'startled'
   | 'receive-care'
   | 'recover'
@@ -130,16 +131,35 @@ export const PET_REACTION_CLIPS: Readonly<Record<PetReaction, PetAnimationClip>>
   },
   celebrate: {
     id: 'celebrate',
-    durationMs: 900,
+    // A top-level Kind 1 note gets a quick, unmistakable jump.
+    // CSS moves the complete pet while this clip supplies expression and shape.
+    durationMs: 1_050,
     priority: 30,
     allowedConditions: ['happy', 'content', 'lonely'],
     keyframes: [
       { offset: 0, pose: {} },
-      { offset: 0.25, pose: { bodyY: -16, bodyRotation: -4, eyeSmile: 1, mouthOpen: 0.35, mouthCurve: 1 } },
-      { offset: 0.55, pose: { bodyY: -8, bodyRotation: 4, eyeSmile: 1, mouthOpen: 0.2, mouthCurve: 1 } },
+      { offset: 0.1, pose: { bodyY: 5, bodyScaleX: 1.1, bodyScaleY: 0.9, eyeOpen: 1.08, mouthOpen: 0.2 } },
+      { offset: 0.24, pose: { bodyY: -9, bodyScaleX: 0.94, bodyScaleY: 1.08, eyeSmile: 1, mouthOpen: 0.55, mouthCurve: 1 } },
+      { offset: 0.7, pose: { bodyY: -6, eyeSmile: 1, mouthOpen: 0.45, mouthCurve: 1, cheekIntensity: 1 } },
+      { offset: 0.9, pose: { bodyY: 2, bodyScaleX: 1.08, bodyScaleY: 0.92, eyeSmile: 0.8 } },
       { offset: 1, pose: {} },
     ],
-    reducedMotionPose: { eyeSmile: 1, mouthCurve: 1, cheekIntensity: 1 },
+    reducedMotionPose: { eyeOpen: 1.08, eyeSmile: 1, mouthOpen: 0.45, mouthCurve: 1, cheekIntensity: 1 },
+  },
+  'reply-roll': {
+    id: 'reply-roll',
+    durationMs: 1_800,
+    priority: 50,
+    allowedConditions: LIVING_CONDITIONS,
+    keyframes: [
+      { offset: 0, pose: {} },
+      { offset: 0.1, pose: { bodyY: 4, bodyScaleX: 1.08, bodyScaleY: 0.92, eyeOpen: 1.08 } },
+      { offset: 0.28, pose: { bodyY: -9, bodyScaleX: 0.95, bodyScaleY: 1.05, eyeSmile: 0.9, mouthCurve: 1 } },
+      { offset: 0.68, pose: { bodyY: -7, eyeSmile: 1, mouthCurve: 1, cheekIntensity: 1 } },
+      { offset: 0.9, pose: { bodyY: 3, bodyScaleX: 1.1, bodyScaleY: 0.9 } },
+      { offset: 1, pose: {} },
+    ],
+    reducedMotionPose: { eyeSmile: 0.9, mouthCurve: 1, cheekIntensity: 1 },
   },
   startled: {
     id: 'startled',
@@ -179,14 +199,14 @@ export const PET_REACTION_CLIPS: Readonly<Record<PetReaction, PetAnimationClip>>
   },
   'zap-celebrate': {
     id: 'zap-celebrate',
-    durationMs: 1250,
+    durationMs: 2_400,
     priority: 70,
     allowedConditions: LIVING_CONDITIONS,
     keyframes: [
       { offset: 0, pose: {} },
-      { offset: 0.18, pose: { bodyY: -15, bodyRotation: -5, bodyScaleX: 0.92, bodyScaleY: 1.09, eyeOpen: 1.12, mouthOpen: 0.35, mouthCurve: 1 } },
-      { offset: 0.42, pose: { bodyY: -5, bodyRotation: 5, bodyScaleX: 1.06, bodyScaleY: 0.95, eyeSmile: 1, mouthOpen: 0.2, mouthCurve: 1 } },
-      { offset: 0.68, pose: { bodyY: -11, bodyRotation: -3, eyeSmile: 1, mouthCurve: 1 } },
+      { offset: 0.08, pose: { bodyY: -4, eyeOpen: 1.12, mouthOpen: 0.3, mouthCurve: 1 } },
+      { offset: 0.36, pose: { bodyY: -3, eyeSmile: 1, mouthOpen: 0.25, mouthCurve: 1 } },
+      { offset: 0.78, pose: { bodyY: -2, eyeSmile: 1, mouthCurve: 1, cheekIntensity: 1 } },
       { offset: 1, pose: {} },
     ],
     reducedMotionPose: { eyeSmile: 1, mouthOpen: 0.2, mouthCurve: 1, cheekIntensity: 1 },

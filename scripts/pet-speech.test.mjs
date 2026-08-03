@@ -46,7 +46,7 @@ test('the same zap deterministically selects the same phrase', () => {
   assert.equal(first.text, second.text);
   assert.match(first.text, /1,000/);
   assert.match(first.text, /Alice/);
-  assert.equal(first.durationMs, 2_400);
+  assert.equal(first.durationMs, 4_400);
 });
 
 test('speech is temporary and advances through its queue', () => {
@@ -66,6 +66,25 @@ test('higher priority speech interrupts active speech', () => {
   value.say(utterance({ id: 'urgent', priority: 80 }));
   assert.equal(scheduled[0].cancelled, true);
   assert.equal(value.snapshot().utterance?.id, 'urgent');
+});
+
+test('active zap speech can be refined without restarting its timer', () => {
+  const { value, scheduled } = controller();
+  value.say(utterance({ id: 'zap:request', text: 'Thanks, someone!', priority: 80 }));
+  const timer = scheduled[0];
+  assert.equal(value.refineActive(
+    utterance({ id: 'zap:request', text: 'Thanks, Alice!', priority: 80 }),
+  ), true);
+  assert.equal(value.snapshot().utterance?.text, 'Thanks, Alice!');
+  assert.equal(scheduled.length, 1);
+  assert.equal(timer.cancelled, false);
+});
+
+test('stale speech cannot replace the current bubble', () => {
+  const { value } = controller();
+  value.say(utterance({ id: 'current' }));
+  assert.equal(value.refineActive(utterance({ id: 'old', text: 'Too late' })), false);
+  assert.equal(value.snapshot().utterance?.id, 'current');
 });
 
 test('dead pets cannot speak and terminal condition clears speech', () => {

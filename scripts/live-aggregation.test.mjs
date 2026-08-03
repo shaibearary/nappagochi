@@ -74,7 +74,7 @@ test('a burst becomes one aggregate with counts by signal type', () => {
   aggregator.destroy();
 });
 
-test('owner publishing wins the reaction policy for a mixed burst', () => {
+test('a reply gets its roll-up reaction and wins over a top-level post', () => {
   const aggregate = {
     windowStartedAt: 100,
     windowEndedAt: 101,
@@ -83,13 +83,13 @@ test('owner publishing wins the reaction policy for a mixed burst', () => {
     byType: { 'owner-published': 1, 'owner-replied': 1 },
     representativeSignal: signal(),
   };
-  assert.equal(reactionForLiveAggregate(aggregate), 'celebrate');
+  assert.equal(reactionForLiveAggregate(aggregate), 'reply-roll');
   assert.equal(
     reactionForLiveAggregate({
       ...aggregate,
       byType: { 'owner-replied': 2 },
     }),
-    'notice',
+    'reply-roll',
   );
 });
 

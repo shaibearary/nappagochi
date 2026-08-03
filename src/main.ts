@@ -13,7 +13,6 @@ import {
   type CommonProfileData,
   type NostrEvent,
   type NostrFilter,
-  type OutboxEventOptions,
   type OutboxPublishOptions,
   type OutboxPublishResult,
   type OutboxQueryOptions,
@@ -34,12 +33,15 @@ import {
 } from './activity-reconciliation';
 import {
   eventRoutingFromConfig,
-  getEventWithRouting,
   hybridReadRelayHints,
   publishEventWithRouting,
   queryEventsWithRouting,
   type EventRouting,
 } from './event-routing';
+import {
+  buildMedicineVerificationBatch,
+  verifiedMedicineReplyIds,
+} from './medicine-verification';
 import {
   HABITAT_SICK_AFTER_DAYS,
   applyHabitatSickness,
@@ -71,6 +73,7 @@ import {
   speechForLiveAggregate,
   type PetSpeechSnapshot,
 } from './pet-speech';
+import { PetSoundController } from './pet-sound';
 import { ReactionMetadataLoader } from './reaction-enrichment';
 import { scoreProfileChecks, type ProfileTier } from './profile-scoring';
 import './styles.css';
@@ -293,6 +296,7 @@ let actionBusy = false;
 let message = '';
 let modal: Modal = null;
 let sidePanelHidden = false;
+let soundEffectsEnabled = false;
 let previewState: PetState | null = null;
 let doctorCandidates: DoctorCandidate[] = [];
 let doctorSource: DoctorSource = null;
@@ -318,6 +322,7 @@ const emotionController = new PetEmotionController({
   reducedMotion: () => window.matchMedia('(prefers-reduced-motion: reduce)').matches,
 });
 const speechController = new PetSpeechController();
+const soundController = new PetSoundController();
 const reactionMetadataLoader = new ReactionMetadataLoader({
   lookupProfile: lookupReactionProfile,
 });
@@ -843,45 +848,27 @@ function resolveLineage(): Birth | null {
   }
 }
 
-function directReplyTarget(event: NostrEvent): { id: string; pubkey: string; relay: string } | null {
-  const eventTags = event.tags.filter((tag) => tag[0] === 'e' && tag[1]);
-  const marked = eventTags.find((tag) => tag[3] === 'reply');
-  const target = marked ?? eventTags.at(-1);
-  const targetPubkey = event.tags.find(
-    (tag) => tag[0] === 'p' && tag[1] && tag[1] !== pubkey,
-  )?.[1];
-  if (!target?.[1] || !targetPubkey) return null;
-  return { id: target[1], pubkey: targetPubkey, relay: target[2] ?? '' };
-}
-
 async function verifyMedicineEvents(events: NostrEvent[]): Promise<Set<string>> {
-  const candidates = events
-    .filter((event) => event.pubkey === pubkey && hasReplyTag(event))
-    .sort((a, b) => b.created_at - a.created_at)
-    .slice(0, 40);
-  const accepted = new Set<string>();
-
-  await Promise.all(
-    candidates.map(async (event) => {
-      const target = directReplyTarget(event);
-      if (!target) return;
-      try {
-        const result = await getPetEvent(target.id, {
-          author: target.pubkey,
-          relays:
-            !eventRouting.localRelayOnly && target.relay ? [target.relay] : undefined,
-          timeoutMs: 4_000,
-        });
-        const parent = result.result?.event;
-        if (parent?.kind === 1 && parent.pubkey === target.pubkey && parent.pubkey !== pubkey) {
-          accepted.add(event.id);
-        }
-      } catch {
-        // A reply is medicine only when its parent can be verified.
-      }
-    }),
-  );
-  return accepted;
+  const batch = buildMedicineVerificationBatch(events, pubkey);
+  if (!batch.filters.length) return new Set();
+  try {
+    const result = await queryPetEvents(batch.filters, {
+      authors: batch.authors,
+      ...(!eventRouting.localRelayOnly && batch.relays.length
+        ? { relays: batch.relays }
+        : {}),
+      limit: batch.targets.length,
+      timeoutMs: 4_000,
+    });
+    return verifiedMedicineReplyIds(
+      batch,
+      result.events.map((item) => item.event),
+      pubkey,
+    );
+  } catch {
+    // A reply is medicine only when its parent can be verified.
+    return new Set();
+  }
 }
 
 function profileD(eventId: string): string {
@@ -954,6 +941,31 @@ async function rememberSidePanelPreference(): Promise<void> {
   }
 }
 
+async function restoreSoundPreference(): Promise<void> {
+  soundEffectsEnabled = false;
+  try {
+    soundEffectsEnabled = await storage.getItem('pet-sound-effects') === 'enabled';
+  } catch {
+    // Sound remains safely off when optional shell storage is unavailable.
+  }
+  soundController.setEnabled(soundEffectsEnabled, { unlock: false });
+}
+
+async function rememberSoundPreference(): Promise<void> {
+  try {
+    await storage.setItem(
+      'pet-sound-effects',
+      soundEffectsEnabled ? 'enabled' : 'disabled',
+    );
+  } catch {
+    // The in-memory preference remains usable when optional persistence fails.
+  }
+}
+
+function unlockEnabledSound(): void {
+  if (soundEffectsEnabled) void soundController.unlock();
+}
+
 const openLiveChannel: OpenLiveChannel = (definition, onEvent, onClosed) => {
   if (eventRouting.localRelayOnly) {
     return relay.subscribe(definition.filters, onEvent, () => undefined, {
@@ -1017,7 +1029,7 @@ function handleLiveChannelStatus(status: {
     });
     liveRetryTimer = window.setTimeout(() => {
       liveRetryTimer = null;
-      if (pubkey && activeBirth) beginLiveSubscription();
+      if (pubkey && births.length) beginLiveSubscription();
     }, delayMs);
   }
   if (wasUnavailable !== liveUnavailable) render();
@@ -1025,11 +1037,11 @@ function handleLiveChannelStatus(status: {
 
 function beginLiveSubscription(): void {
   closeLiveChannels();
-  if (!liveSession || !pubkey || !activeBirth) {
+  if (!liveSession || !pubkey || !births.length) {
     console.log('[nappagochi:live] owner activity channel not started', {
       hasSession: Boolean(liveSession),
       hasOwner: Boolean(pubkey),
-      hasActiveBirth: Boolean(activeBirth),
+      hasBirth: births.length > 0,
     });
     return;
   }
@@ -1242,29 +1254,6 @@ async function lookupReactionProfile(pubkey: string): Promise<CommonProfileData 
   return profile ? { ...profile } : null;
 }
 
-async function getPetEvent(
-  eventId: string,
-  options?: OutboxEventOptions,
-) {
-  const routedOptions =
-    readRelayHints.length && !eventRouting.localRelayOnly
-      ? {
-          ...options,
-          relays: uniqueRelayUrls([
-            ...(options?.relays ?? []),
-            ...readRelayHints,
-          ]),
-        }
-      : options;
-  return getEventWithRouting(
-    eventRouting,
-    (filters) => relay.query(filters),
-    (currentEventId, currentOptions) => outbox.getEvent(currentEventId, currentOptions),
-    eventId,
-    routedOptions,
-  );
-}
-
 async function prepareReadRelayPlan(owner: string): Promise<void> {
   if (eventRouting.localRelayOnly) {
     readRelayHints = [eventRouting.localRelayUrl];
@@ -1408,13 +1397,6 @@ async function load(): Promise<void> {
         ],
       );
     }
-    profileHealth = await calculateProfileHealth(
-      pubkey,
-      currentProfile,
-      currentFollows,
-      currentRelays,
-      profileEvents,
-    );
     incompleteSync = Boolean(
       profileHealthResult.incomplete || birthResult.incomplete || noteResult.incomplete,
     );
@@ -1422,13 +1404,24 @@ async function load(): Promise<void> {
       .map((item) => parseBirth(item.event))
       .filter((birth): birth is Birth => Boolean(birth));
     notes = noteResult.events.map((item) => item.event);
+    // Establish the two live streams immediately after the core history arrives.
+    // Medicine validation, profile scoring, appearance, and preview restoration
+    // are derived/optional work and must not consume the shell's startup burst
+    // budget before the streams that keep the pet alive.
+    beginLiveSubscription();
+    profileHealth = await calculateProfileHealth(
+      pubkey,
+      currentProfile,
+      currentFollows,
+      currentRelays,
+      profileEvents,
+    );
     verifiedMedicineIds = await verifyMedicineEvents(notes);
     activeBirth = resolveLineage();
     health = activeBirth ? reduceHealth(activeBirth, nowSeconds()) : null;
     appearance = activeBirth ? await loadAppearance(activeBirth) : { ...DEFAULT_APPEARANCE };
     if (isViewingAnotherPet()) previewState = null;
     else await restorePreview();
-    beginLiveSubscription();
   } catch (error) {
     message = error instanceof Error ? error.message : 'The Nostr history could not be loaded.';
   } finally {
@@ -1541,18 +1534,31 @@ function petMarkup(
     <div class="pet pet--${state} palette--${petAppearance.palette}" style="${poseStyle}" role="img"
       aria-label="${escapeHtml(conditionLabel)} Nostr pet">
       <span class="pet-shadow"></span>
-      <span class="pet-ear pet-ear--left"></span>
-      <span class="pet-ear pet-ear--right"></span>
-      <span class="pet-body">
-        ${accessory}
-        <span class="pet-cheek pet-cheek--left"></span>
-        <span class="pet-cheek pet-cheek--right"></span>
-        <span class="pet-eye pet-eye--left">${eye}</span>
-        <span class="pet-eye pet-eye--right">${eye}</span>
-        <span class="pet-mouth">${STATE_META[state].face}</span>
-        <span class="pet-patch"></span>
+      <span class="pet-turner">
+        <span class="pet-face pet-face--front">
+          <span class="pet-ear pet-ear--left"></span>
+          <span class="pet-ear pet-ear--right"></span>
+          <span class="pet-body">
+            ${accessory}
+            <span class="pet-cheek pet-cheek--left"></span>
+            <span class="pet-cheek pet-cheek--right"></span>
+            <span class="pet-eye pet-eye--left">${eye}</span>
+            <span class="pet-eye pet-eye--right">${eye}</span>
+            <span class="pet-mouth">${STATE_META[state].face}</span>
+            <span class="pet-patch"></span>
+          </span>
+          <span class="pet-signal" aria-hidden="true">⌁</span>
+        </span>
+        <span class="pet-face pet-face--back" aria-hidden="true">
+          <span class="pet-ear pet-ear--left"></span>
+          <span class="pet-ear pet-ear--right"></span>
+          <span class="pet-back-body">
+            ${accessory}
+            <span class="pet-back-patch"></span>
+            <span class="pet-tail"></span>
+          </span>
+        </span>
       </span>
-      <span class="pet-signal" aria-hidden="true">⌁</span>
     </div>
   `;
 }
@@ -1608,17 +1614,6 @@ function signedOutMarkup(): string {
         <span>Paste an npub to inspect its Nostr-derived condition in read-only mode.</span>
         ${viewerFormMarkup('signed-out-view-form')}
       </div>
-      ${eventRouting.localRelayOnly
-        ? `<div class="debug-login-note">
-            <strong>Local debug mode</strong>
-            <span>Use <strong>Test nsec</strong> in Paja’s Signer panel. The secret stays in the local shell and never enters this pet.</span>
-          </div>`
-        : eventRouting.localRelayMirror
-          ? `<div class="debug-login-note">
-              <strong>Hybrid relay mode</strong>
-              <span>NIP-65 remains primary. The loopback relay keeps a local mirror, with public relays as the missing-list fallback.</span>
-            </div>`
-        : ''}
     </section>
   `;
 }
@@ -1940,7 +1935,7 @@ function habitatSourceModalMarkup(): string {
 
 function settingsModalMarkup(): string {
   return modalFrame(
-    'Pet appearance',
+    'Pet settings',
     `
       <form id="settings-form">
         <fieldset>
@@ -1969,6 +1964,16 @@ function settingsModalMarkup(): string {
           ${health?.state === 'dead' ? 'Memorial appearance is fixed' : actionBusy ? 'Saving…' : 'Save appearance'}
         </button>
       </form>
+      <section class="local-setting" aria-labelledby="sound-setting-title">
+        <span>
+          <strong id="sound-setting-title">Sound effects</strong>
+          <small>Play a short sound for posts, replies, and zaps. This preference stays in the local shell.</small>
+        </span>
+        <label class="sound-switch" aria-label="Enable sound effects">
+          <input type="checkbox" data-action="toggle-sound" ${soundEffectsEnabled ? 'checked' : ''}>
+          <span aria-hidden="true"></span>
+        </label>
+      </section>
     `,
   );
 }
@@ -2159,7 +2164,7 @@ function render(): void {
     app.innerHTML = `
       <section class="runtime-guard">
         ${petMarkup('lonely', DEFAULT_APPEARANCE)}
-        <h1>This prototype needs a compatible napplet host</h1>
+        <h1>Nappagochi needs a compatible napplet host</h1>
         <p>Open the built artifact through Paja or another NIP-5D-compatible shell with identity and outbox support.</p>
       </section>`;
     return;
@@ -2278,6 +2283,11 @@ function bindInteractions(): void {
         void loadDoctorCandidates();
       } else if (action === 'settings' && canWriteForCurrentPet()) {
         modal = 'settings';
+        render();
+      } else if (action === 'toggle-sound' && element instanceof HTMLInputElement) {
+        soundEffectsEnabled = element.checked;
+        soundController.setEnabled(soundEffectsEnabled);
+        void rememberSoundPreference();
         render();
       } else if (action === 'toggle-panel') {
         sidePanelHidden = !sidePanelHidden;
@@ -2715,6 +2725,8 @@ function cleanUp(): void {
   speechUnsubscribe?.();
   speechUnsubscribe = null;
   speechController.destroy();
+  soundController.destroy();
+  document.removeEventListener('pointerdown', unlockEnabledSound);
   if (reactionFrame !== null) window.cancelAnimationFrame(reactionFrame);
   if (activityRefreshTimer !== null) window.clearTimeout(activityRefreshTimer);
   identitySubscription?.close();
@@ -2729,6 +2741,8 @@ async function start(): Promise<void> {
   await setupTheme();
   await setupEventRouting();
   await restoreSidePanelPreference();
+  await restoreSoundPreference();
+  document.addEventListener('pointerdown', unlockEnabledSound, { passive: true });
   liveSession = new LiveSessionManager({
     mountedAt: APP_MOUNTED_AT,
     openChannel: openLiveChannel,
@@ -2750,6 +2764,11 @@ async function start(): Promise<void> {
       });
       if (accepted) {
         animateCurrentReaction();
+        void soundController.play(reaction);
+        // Speech starts with the animation. Optional profile enrichment may
+        // refine "someone" to a display name without delaying the bubble.
+        const immediateSpeech = speechForLiveAggregate(aggregate, 'gentle');
+        speechController.say(immediateSpeech);
         const enrichmentGeneration = ++reactionEnrichmentGeneration;
         const zapSender = aggregate.representativeSignal.zap?.senderPubkey;
         void reactionMetadataLoader.enrichApprovedReaction({
@@ -2765,7 +2784,11 @@ async function start(): Promise<void> {
             });
             return;
           }
-          speechController.say(speechForLiveAggregate(aggregate, 'gentle', actor?.name));
+          if (actor?.name) {
+            speechController.refineActive(
+              speechForLiveAggregate(aggregate, 'gentle', actor.name),
+            );
+          }
         });
       }
     },

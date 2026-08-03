@@ -35,8 +35,9 @@ export class ReactionMetadataLoader {
     this.timeoutMs = Math.max(100, options.timeoutMs ?? 900);
     this.cacheTtlMs = Math.max(1_000, options.cacheTtlMs ?? 10 * 60_000);
     this.now = options.now ?? Date.now;
-    this.schedule = options.schedule ?? setTimeout;
-    this.cancel = options.cancel ?? clearTimeout;
+    // Preserve Window as the receiver in browser sandboxes.
+    this.schedule = options.schedule ?? ((callback, delayMs) => setTimeout(callback, delayMs));
+    this.cancel = options.cancel ?? ((timer) => clearTimeout(timer));
     this.log = options.logger ?? ((message, details) => console.log(message, details ?? {}));
   }
 

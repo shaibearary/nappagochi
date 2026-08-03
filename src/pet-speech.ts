@@ -63,7 +63,8 @@ export function speechForLiveAggregate(
       id: `zap:${zap.zapRequestId}`,
       intent: 'gratitude',
       text: phrase(formatSats(zap.amountSats), actorName || 'someone'),
-      durationMs: 2_400,
+      // The turn lasts 2.4s; keep the gratitude visible for 2s afterward.
+      durationMs: 4_400,
       priority: 80,
     };
   }
@@ -72,7 +73,8 @@ export function speechForLiveAggregate(
       id: `published:${aggregate.representativeSignal.eventId}`,
       intent: 'activity',
       text: aggregate.total > 1 ? 'So much activity! I feel energized!' : 'You posted! I feel energized!',
-      durationMs: 2_200,
+      // The jump lasts 1.05s; leave enough time to read the reaction.
+      durationMs: 3_100,
       priority: 40,
     };
   }
@@ -80,7 +82,8 @@ export function speechForLiveAggregate(
     id: `conversation:${aggregate.representativeSignal.eventId}`,
     intent: 'conversation',
     text: 'Making conversation? I love that!',
-    durationMs: 2_200,
+    // The reply roll lasts 1.8s; keep the bubble for 2s afterward.
+    durationMs: 3_800,
     priority: 30,
   };
 }
@@ -115,8 +118,10 @@ export class PetSpeechController {
     logger?: (message: string, details?: Record<string, unknown>) => void;
   }) {
     this.condition = options?.condition ?? 'happy';
-    this.schedule = options?.schedule ?? setTimeout;
-    this.cancel = options?.cancel ?? clearTimeout;
+    // Keep the browser globals bound to their Window. Passing the raw methods
+    // through as callbacks throws "Illegal invocation" in sandboxed runtimes.
+    this.schedule = options?.schedule ?? ((callback, delayMs) => setTimeout(callback, delayMs));
+    this.cancel = options?.cancel ?? ((timer) => clearTimeout(timer));
     this.log = options?.logger ?? ((message, details) => console.log(message, details ?? {}));
     this.log('[nappagochi:speech] controller created', { condition: this.condition });
   }
@@ -152,6 +157,17 @@ export class PetSpeechController {
 
   snapshot(): PetSpeechSnapshot {
     return { utterance: this.active, queuedCount: this.queue.length };
+  }
+
+  refineActive(utterance: PetUtterance): boolean {
+    if (!this.active || this.active.id !== utterance.id) return false;
+    this.active = utterance;
+    this.log('[nappagochi:speech] active utterance refined', {
+      utteranceId: utterance.id,
+      intent: utterance.intent,
+    });
+    this.notify();
+    return true;
   }
 
   subscribe(listener: (snapshot: PetSpeechSnapshot) => void): () => void {

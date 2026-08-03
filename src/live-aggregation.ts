@@ -196,6 +196,7 @@ export class LiveSignalAggregator {
 
 export function reactionForLiveAggregate(aggregate: LiveAggregate): PetReaction {
   if ((aggregate.byType['zap-received'] ?? 0) > 0) return 'zap-celebrate';
+  if ((aggregate.byType['owner-replied'] ?? 0) > 0) return 'reply-roll';
   if ((aggregate.byType['owner-published'] ?? 0) > 0) return 'celebrate';
   return 'notice';
 }

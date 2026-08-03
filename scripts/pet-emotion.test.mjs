@@ -89,6 +89,39 @@ test('reaction keyframes begin from the authoritative baseline pose', () => {
   assert.equal(reactionStart.bodyY, baseline.bodyY);
 });
 
+test('a Kind 1 celebration performs one jump and then settles', () => {
+  let now = 1_000;
+  const controller = new PetEmotionController({
+    condition: 'happy',
+    now: () => now,
+    logger: () => {},
+  });
+
+  assert.equal(PET_REACTION_CLIPS.celebrate.durationMs, 1_050);
+  assert.equal(controller.react('celebrate'), true);
+
+  now += 525;
+  const middle = controller.snapshot();
+  assert.equal(middle.reaction, 'celebrate');
+  assert.ok(middle.pose.mouthOpen >= 0.45);
+  assert.equal(middle.pose.eyeSmile, 1);
+
+  now += 525;
+  const settled = controller.snapshot();
+  assert.equal(settled.reaction, null);
+  assert.equal(settled.pose.bodyY, resolvePetPose({ condition: 'happy' }).bodyY);
+});
+
+test('reply and zap reactions have distinct movement timing', () => {
+  assert.equal(PET_REACTION_CLIPS['reply-roll'].durationMs, 1_800);
+  assert.equal(PET_REACTION_CLIPS['reply-roll'].priority, 50);
+  assert.equal(PET_REACTION_CLIPS['zap-celebrate'].durationMs, 2_400);
+  assert.ok(
+    PET_REACTION_CLIPS['zap-celebrate'].priority >
+      PET_REACTION_CLIPS['reply-roll'].priority,
+  );
+});
+
 test('zap celebration is available to every living condition but not death', () => {
   for (const condition of ['happy', 'content', 'lonely', 'sick', 'critical']) {
     const controller = new PetEmotionController({
