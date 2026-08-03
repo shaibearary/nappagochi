@@ -73,7 +73,10 @@ import {
   speechForLiveAggregate,
   type PetSpeechSnapshot,
 } from './pet-speech';
-import { PetSoundController } from './pet-sound';
+import {
+  PetSoundController,
+  soundEnabledFromStoredPreference,
+} from './pet-sound';
 import { ReactionMetadataLoader } from './reaction-enrichment';
 import { scoreProfileChecks, type ProfileTier } from './profile-scoring';
 import './styles.css';
@@ -942,11 +945,13 @@ async function rememberSidePanelPreference(): Promise<void> {
 }
 
 async function restoreSoundPreference(): Promise<void> {
-  soundEffectsEnabled = false;
+  soundEffectsEnabled = true;
   try {
-    soundEffectsEnabled = await storage.getItem('pet-sound-effects') === 'enabled';
+    soundEffectsEnabled = soundEnabledFromStoredPreference(
+      await storage.getItem('pet-sound-effects'),
+    );
   } catch {
-    // Sound remains safely off when optional shell storage is unavailable.
+    // Sound stays on by default when optional shell storage is unavailable.
   }
   soundController.setEnabled(soundEffectsEnabled, { unlock: false });
 }
@@ -1967,7 +1972,7 @@ function settingsModalMarkup(): string {
       <section class="local-setting" aria-labelledby="sound-setting-title">
         <span>
           <strong id="sound-setting-title">Sound effects</strong>
-          <small>Play a short sound for posts, replies, and zaps. This preference stays in the local shell.</small>
+          <small>On by default for posts, replies, and zaps. After opening, tap Nappagochi once to allow audio.</small>
         </span>
         <label class="sound-switch" aria-label="Enable sound effects">
           <input type="checkbox" data-action="toggle-sound" ${soundEffectsEnabled ? 'checked' : ''}>

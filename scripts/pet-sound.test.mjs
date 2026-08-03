@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   PetSoundController,
   soundCuesForReaction,
+  soundEnabledFromStoredPreference,
 } from '../src/pet-sound.ts';
 
 function fakeAudioContext(initialState = 'running') {
@@ -57,6 +58,13 @@ test('post, reply, and zap reactions have distinct synchronized sound cues', () 
   assert.ok(post.at(-1).delayMs < reply.at(-1).delayMs);
   assert.ok(reply.at(-1).delayMs < zap.at(-1).delayMs);
   assert.deepEqual(soundCuesForReaction('notice'), []);
+});
+
+test('sound defaults on while preserving an explicit off preference', () => {
+  assert.equal(soundEnabledFromStoredPreference(null), true);
+  assert.equal(soundEnabledFromStoredPreference(undefined), true);
+  assert.equal(soundEnabledFromStoredPreference('enabled'), true);
+  assert.equal(soundEnabledFromStoredPreference('disabled'), false);
 });
 
 test('sound stays silent until the user enables it', async () => {

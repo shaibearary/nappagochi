@@ -34,6 +34,12 @@ export function soundCuesForReaction(reaction: PetReaction): readonly PetToneCue
   return REACTION_CUES[reaction] ?? [];
 }
 
+export function soundEnabledFromStoredPreference(
+  storedPreference: string | null | undefined,
+): boolean {
+  return storedPreference !== 'disabled';
+}
+
 export class PetSoundController {
   private enabled = false;
   private context: AudioContext | null = null;
