@@ -2,6 +2,7 @@ import {
   common,
   config,
   identity,
+  keys,
   link,
   outbox,
   relay,
@@ -96,6 +97,11 @@ declare global {
         query?: unknown;
         subscribe?: unknown;
         publish?: unknown;
+      };
+      keys?: {
+        registerAction?: unknown;
+        unregisterAction?: unknown;
+        onAction?: unknown;
       };
     };
   }
@@ -307,6 +313,8 @@ let doctorLoading = false;
 let eventRouting: EventRouting = eventRoutingFromConfig({});
 let identitySubscription: Subscription | null = null;
 let themeSubscription: Subscription | null = null;
+let keysBinding: { close(): void } | null = null;
+let cleaningUp = false;
 let healthTimer: number | null = null;
 let activityRefreshTimer: number | null = null;
 let loadGeneration = 0;
@@ -941,6 +949,35 @@ async function rememberSidePanelPreference(): Promise<void> {
     });
   } catch {
     // The in-memory toggle remains usable when optional persistence fails.
+  }
+}
+
+function toggleSidePanel(): void {
+  sidePanelHidden = !sidePanelHidden;
+  console.log('[nappagochi:layout] care panel visibility changed', {
+    hidden: sidePanelHidden,
+  });
+  void rememberSidePanelPreference();
+  render();
+}
+
+async function setupKeys(): Promise<void> {
+  if (!window.napplet?.keys) return;
+  try {
+    const binding = await keys.register(
+      {
+        id: 'pet.toggle-care-panel',
+        label: 'Toggle pet care panel',
+        defaultKey: 'Alt+P',
+      },
+      toggleSidePanel,
+    );
+    if (cleaningUp) binding.close();
+    else keysBinding = binding;
+  } catch (error) {
+    console.log('[nappagochi:degradation] keyboard action unavailable; use the panel button', {
+      reason: error instanceof Error ? error.message : 'keys-unavailable',
+    });
   }
 }
 
@@ -2295,12 +2332,7 @@ function bindInteractions(): void {
         void rememberSoundPreference();
         render();
       } else if (action === 'toggle-panel') {
-        sidePanelHidden = !sidePanelHidden;
-        console.log('[nappagochi:layout] care panel visibility changed', {
-          hidden: sidePanelHidden,
-        });
-        void rememberSidePanelPreference();
-        render();
+        toggleSidePanel();
       } else if (action === 'preview') {
         modal = 'preview';
         render();
@@ -2717,6 +2749,7 @@ async function setupTheme(): Promise<void> {
 }
 
 function cleanUp(): void {
+  cleaningUp = true;
   liveSession?.destroy();
   liveSession = null;
   liveAggregator?.destroy();
@@ -2736,6 +2769,8 @@ function cleanUp(): void {
   if (activityRefreshTimer !== null) window.clearTimeout(activityRefreshTimer);
   identitySubscription?.close();
   themeSubscription?.close();
+  keysBinding?.close();
+  keysBinding = null;
   if (healthTimer !== null) window.clearInterval(healthTimer);
 }
 
@@ -2746,6 +2781,7 @@ async function start(): Promise<void> {
   await setupTheme();
   await setupEventRouting();
   await restoreSidePanelPreference();
+  void setupKeys();
   await restoreSoundPreference();
   document.addEventListener('pointerdown', unlockEnabledSound, { passive: true });
   liveSession = new LiveSessionManager({
