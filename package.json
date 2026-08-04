@@ -29,6 +29,7 @@
     "test:live": "node --test scripts/live-session.test.mjs scripts/live-aggregation.test.mjs",
     "test:event-routing": "node --test scripts/event-routing.test.mjs",
     "test:paja-debug": "node --test scripts/paja-nsec-debug-patch.test.mjs",
+    "test:keys": "pnpm build && node --test scripts/keys-integration.test.mjs",
     "test:relay-copy": "node --test scripts/copy-events-to-local-relay.test.mjs",
     "test:routing": "node --test scripts/publish-routing.test.mjs",
     "test:local-relay": "node --test scripts/local-test-relay.test.mjs",

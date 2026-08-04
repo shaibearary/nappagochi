@@ -30,6 +30,14 @@ the zap amount and sender.
 These live reactions are visual feedback only: they never override the pet's
 authoritative lifecycle or health state.
 
+## Keyboard integration
+
+When the shell provides NAP-KEYS, `Alt+P` is offered as an optional binding for
+showing or hiding the pet care panel. The visible panel button remains the
+fallback. NAP-KEYS smart forwarding keeps input, textarea, select, and
+contenteditable keystrokes inside the napplet instead of forwarding typed text
+to the shell.
+
 ## Run locally
 
 ```bash
@@ -68,6 +76,8 @@ directory and must never use a real identity or a key controlling funds.
 ## Napplet boundaries
 
 - Required NAP domains: `identity` and `outbox`.
+- Optional NAP-KEYS action: `pet.toggle-care-panel`; the panel button is the
+  fallback when `keys` is unavailable.
 - Normal Nostr reads and publishes are OUTBOX-first.
 - Signing, relay discovery, validation, and fanout belong to the shell.
 - The napplet never handles private keys or uses direct browser network access.
